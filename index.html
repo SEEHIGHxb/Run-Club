@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run Club — Group Run Tracker</title>
+  <meta name="theme-color" content="#0f766e">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏃</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./index.css?v=1">
+</head>
+<body>
+  <!-- ===================== Gate (passcode + name) ===================== -->
+  <div id="gate" class="gate">
+    <form id="gate-form" class="gate-card" autocomplete="off">
+      <div class="gate-emoji">🏃‍♂️💨</div>
+      <h1>Run Club</h1>
+      <p class="gate-sub">Enter the group passcode and your name to join.</p>
+
+      <label class="field">
+        <span>Group passcode</span>
+        <input id="gate-pass" type="password" inputmode="text" required placeholder="••••••••">
+      </label>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="gate-name" list="roster" required placeholder="e.g. Jojo" maxlength="40">
+        <datalist id="roster"></datalist>
+      </label>
+
+      <p id="gate-error" class="gate-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">Enter</button>
+      <p class="gate-hint">Your name is remembered on this device.</p>
+    </form>
+  </div>
+
+  <!-- ===================== Main app ===================== -->
+  <div id="app" class="app-container" hidden>
+    <header class="app-header">
+      <div class="brand">
+        <h1>🏃 Run Club</h1>
+        <p>Group run tracker · live</p>
+      </div>
+      <div class="header-right">
+        <span id="live-dot" class="live-dot" title="Realtime connection"></span>
+        <span class="who">Hi, <strong id="who-name">…</strong></span>
+        <button id="btn-switch" class="btn btn-ghost btn-sm">Switch user</button>
+      </div>
+    </header>
+
+    <!-- Totals strip -->
+    <section id="summary" class="summary" aria-label="Group totals"></section>
+
+    <!-- Log a run -->
+    <section class="card">
+      <h2>Log a run</h2>
+      <form id="run-form" class="run-form">
+        <label class="field">
+          <span>Distance (km)</span>
+          <input id="f-distance" type="number" step="0.01" min="0.01" required placeholder="5.0">
+        </label>
+        <label class="field">
+          <span>Date</span>
+          <input id="f-date" type="date" required>
+        </label>
+        <label class="field">
+          <span>Duration (min) <em>optional</em></span>
+          <input id="f-duration" type="number" step="0.1" min="0" placeholder="30">
+        </label>
+        <label class="field field-wide">
+          <span>Notes / route <em>optional</em></span>
+          <input id="f-notes" type="text" maxlength="140" placeholder="Riverside loop, felt great">
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Add run</button>
+          <span id="run-msg" class="run-msg" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+
+    <div class="grid-2">
+      <!-- Leaderboard -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Leaderboard</h2>
+          <div class="seg" role="tablist" aria-label="Leaderboard range">
+            <button class="seg-btn active" data-range="week" role="tab">This week</button>
+            <button class="seg-btn" data-range="month" role="tab">This month</button>
+            <button class="seg-btn" data-range="all" role="tab">All time</button>
+          </div>
+        </div>
+        <ol id="leaderboard" class="leaderboard"></ol>
+      </section>
+
+      <!-- Recent runs -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Recent runs</h2>
+          <label class="mine-toggle">
+            <input type="checkbox" id="only-mine"> Only mine
+          </label>
+        </div>
+        <ul id="run-list" class="run-list"></ul>
+      </section>
+    </div>
+
+    <footer class="app-footer">
+      <span id="conn-note"></span>
+    </footer>
+  </div>
+
+  <script type="module" src="./app.js?v=1"></script>
+</body>
+</html>
