@@ -10,8 +10,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 export const isConfigured =
   SUPABASE_URL &&
   SUPABASE_ANON_KEY &&
-  !SUPABASE_URL.startsWith('YOUR_') &&
-  !SUPABASE_ANON_KEY.startsWith('YOUR_');
+  !SUPABASE_URL.includes('YOUR-PROJECT') &&
+  !SUPABASE_ANON_KEY.includes('your-anon-key');
 
 // Only build a client when configured, so the app can show a friendly setup
 // message instead of throwing on load.

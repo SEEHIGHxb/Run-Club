@@ -339,7 +339,7 @@ function fmtDuration(min) {
 function fmtDate(iso) {
   // iso is YYYY-MM-DD; render as e.g. "Sun 5 Jul"
   const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dt = new Date(y, m - 1, d);
   return dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
