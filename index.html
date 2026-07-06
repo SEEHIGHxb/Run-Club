@@ -3,67 +3,282 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Run Club — Group Run Tracker</title>
-  <meta name="theme-color" content="#0f766e">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏃</text></svg>">
+  <title>Run or Lose Club</title>
+  <meta name="theme-color" content="#ff0000">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='80'>R</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./index.css?v=2">
+  <link rel="stylesheet" href="./index.css?v=5">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
 </head>
 <body>
-  <!-- ===================== Gate (passcode + name) ===================== -->
+  <!-- ===================== Gate (Google Sign In) ===================== -->
   <div id="gate" class="gate">
-    <form id="gate-form" class="gate-card" autocomplete="off">
-      <div class="gate-emoji">🏃‍♂️💨</div>
-      <h1>Run Club</h1>
-      <p class="gate-sub">Enter the group passcode and your name to join.</p>
-
-      <label class="field">
-        <span>Group passcode</span>
-        <input id="gate-pass" type="password" inputmode="text" required placeholder="••••••••">
-      </label>
-
-      <label class="field">
-        <span>Your name</span>
-        <input id="gate-name" list="roster" required placeholder="e.g. Jojo" maxlength="40">
-        <datalist id="roster"></datalist>
-      </label>
-
+    <div class="gate-card">
+      <h1>Run or Lose Club</h1>
+      <p class="gate-sub">A real-time group run tracker. Sign in to start tracking runs, joining groups, and logging with friends.</p>
+      
       <p id="gate-error" class="gate-error" role="alert" hidden></p>
-      <button type="submit" class="btn btn-primary btn-block">Enter</button>
-      <p class="gate-hint">Your name is remembered on this device.</p>
-    </form>
+      <button id="btn-login-google" class="btn-google">
+        <img src="https://authjs.dev/img/providers/google.svg" alt="Google Logo" width="18" height="18">
+        <span>Sign in with Google</span>
+      </button>
+      
+      <p class="gate-hint">Secure authentication provided by Supabase.</p>
+    </div>
   </div>
 
   <!-- ===================== Main app ===================== -->
   <div id="app" class="app-container" hidden>
     <header class="app-header">
       <div class="brand">
-        <h1>🏃 Run Club</h1>
+        <h1>Run or Lose Club</h1>
         <p>Group run tracker · live</p>
       </div>
       <div class="header-right">
+        <!-- Draggable Theme Switch -->
+        <div id="theme-switch" class="theme-seg" data-drag-control title="Drag or click to toggle theme">
+          <button class="theme-seg-btn" data-theme-choice="light">Light</button>
+          <button class="theme-seg-btn" data-theme-choice="dark">Dark</button>
+          <div class="theme-seg-handle"></div>
+        </div>
         <span id="live-dot" class="live-dot" title="Realtime connection"></span>
-        <span class="who">Hi, <strong id="who-name">…</strong></span>
-        <button id="btn-switch" class="btn btn-ghost btn-sm">Switch user</button>
+        <div class="user-profile">
+          <img id="who-avatar" class="avatar" src="" alt="" hidden>
+          <span class="who">Hi, <strong id="who-name">…</strong></span>
+        </div>
+        <button id="btn-logout" class="btn btn-ghost btn-sm">Sign out</button>
       </div>
     </header>
 
-    <!-- Totals strip -->
-    <section id="summary" class="summary" aria-label="Group totals"></section>
+    <!-- Navigation Tabs -->
+    <nav class="app-nav">
+      <button class="nav-btn active" data-tab="runs">Runs</button>
+      <button class="nav-btn" data-tab="friends">Friends</button>
+      <button class="nav-btn" data-tab="groups">Groups</button>
+    </nav>
 
-    <!-- Log a run -->
-    <section class="card">
+    <!-- ===================== Panel: Runs ===================== -->
+    <div id="panel-runs" class="tab-panel">
+      <!-- Active View Filter -->
+      <div class="view-filter-card">
+        <label class="view-filter-label">
+          <span>Viewing:</span>
+          <select id="feed-filter" class="filter-select">
+            <option value="friends">All Friends & Me</option>
+          </select>
+        </label>
+      </div>
+
+      <!-- Totals strip -->
+      <section id="summary" class="summary" aria-label="Totals"></section>
+
+      <div class="grid-2" style="margin-top: 16px;">
+        <!-- Leaderboard -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Leaderboard</h2>
+            <div class="seg" role="tablist" aria-label="Leaderboard range">
+              <button class="seg-btn active" data-range="week" role="tab">This week</button>
+              <button class="seg-btn" data-range="month" role="tab">This month</button>
+              <button class="seg-btn" data-range="all" role="tab">All time</button>
+            </div>
+          </div>
+          <ol id="leaderboard" class="leaderboard"></ol>
+
+          <!-- Baht Pool Challenge Section -->
+          <div class="baht-challenge-section" style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 15px;">
+            <h3 style="margin-bottom: 10px;">Run or Lose Pool</h3>
+            <ul id="baht-challenge-list" class="leaderboard"></ul>
+          </div>
+        </section>
+
+        <!-- Recent runs -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Recent runs</h2>
+            <label class="mine-toggle">
+              <input type="checkbox" id="only-mine"> Only mine
+            </label>
+          </div>
+          <ul id="run-list" class="run-list"></ul>
+        </section>
+      </div>
+    </div>
+
+    <!-- ===================== Panel: Friends ===================== -->
+    <div id="panel-friends" class="tab-panel" hidden>
+      <div class="grid-2">
+        <!-- Add Friend -->
+        <section class="card">
+          <h2>Add Friends</h2>
+          <div class="friend-share">
+            <p class="section-desc">Share your Friend Link to let others add you:</p>
+            <div class="copy-box">
+              <input id="my-friend-link" readonly type="text" value="Loading...">
+              <button id="btn-copy-friend-link" class="btn btn-primary btn-sm">Copy Link</button>
+            </div>
+            <p id="my-uid-hint" class="uid-hint">User ID: <code id="my-uid">...</code></p>
+          </div>
+          
+          <div class="friend-add-manual" style="margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px;">
+            <p class="section-desc">Or search directly using a friend's User ID:</p>
+            <form id="friend-add-form" class="run-form">
+              <label class="field field-wide">
+                <span>Friend's User ID</span>
+                <input id="f-friend-id" type="text" required placeholder="Paste user ID here..." maxlength="50">
+              </label>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Send Friend Request</button>
+                <span id="friend-add-msg" class="run-msg"></span>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- Friend Requests -->
+        <section class="card">
+          <h2>Friend Requests</h2>
+          <div class="requests-container">
+            <h3>Incoming Requests</h3>
+            <ul id="incoming-requests-list" class="run-list"></ul>
+            
+            <h3 style="margin-top: 20px;">Outgoing Requests</h3>
+            <ul id="outgoing-requests-list" class="run-list"></ul>
+          </div>
+        </section>
+      </div>
+
+      <!-- Friends List -->
+      <section class="card" style="margin-top: 16px;">
+        <h2>Your Friends</h2>
+        <ul id="friends-list" class="run-list"></ul>
+      </section>
+    </div>
+
+    <!-- ===================== Panel: Groups ===================== -->
+    <div id="panel-groups" class="tab-panel" hidden>
+      <div class="grid-2">
+        <!-- Create Group -->
+        <section class="card">
+          <h2>Create a Group</h2>
+          <form id="group-create-form" class="run-form">
+            <label class="field field-wide">
+              <span>Group Name</span>
+              <input id="f-group-name" type="text" required placeholder="e.g. Night Runners Club" maxlength="50">
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Create Group</button>
+              <span id="group-create-msg" class="run-msg"></span>
+            </div>
+          </form>
+        </section>
+
+        <!-- Join Group -->
+        <section class="card">
+          <h2>Join a Group</h2>
+          <form id="group-join-form" class="run-form">
+            <label class="field field-wide">
+              <span>Invite Code</span>
+              <input id="f-invite-code" type="text" required placeholder="e.g. Z9KJ5P" maxlength="10">
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Join Group</button>
+              <span id="group-join-msg" class="run-msg"></span>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <!-- Groups & Members Grid -->
+      <div class="grid-2" style="margin-top: 16px;">
+        <section class="card">
+          <h2>Your Groups</h2>
+          <ul id="groups-list" class="run-list"></ul>
+        </section>
+
+        <section id="group-manage-card" class="card" hidden>
+          <div class="card-head">
+            <h2 id="manage-group-name">Manage Group</h2>
+            <button id="btn-get-group-invite" class="btn btn-primary btn-sm">Generate Invite Link</button>
+          </div>
+          <div id="group-invite-display" class="copy-box" hidden>
+            <input id="group-invite-link" readonly type="text">
+            <button id="btn-copy-group-invite" class="btn btn-ghost btn-sm">Copy</button>
+          </div>
+          <h3 style="margin-top: 15px; margin-bottom: 8px;">Members</h3>
+          <ul id="group-members-list" class="run-list"></ul>
+        </section>
+      </div>
+    </div>
+
+    <!-- ===================== Panel: Profile ===================== -->
+    <div id="panel-profile" class="tab-panel" hidden>
+      <div class="grid-2">
+        <!-- Edit Profile Card -->
+        <section class="card">
+          <h2>Your Profile</h2>
+          <form id="profile-form" class="run-form">
+            <div class="field field-wide" style="align-items: center; text-align: center; gap: 8px;">
+              <div class="avatar-edit-container">
+                <img id="profile-edit-avatar" class="avatar" style="width: 80px; height: 80px; border: 2px solid var(--brand); cursor: pointer;" src="" alt="Profile Image" title="Click to change profile picture">
+                <div class="avatar-edit-overlay">
+                  <span>Edit</span>
+                </div>
+              </div>
+              <input id="f-avatar-file" type="file" accept="image/*" style="display: none;">
+              <span class="import-hint">Click the picture to upload a custom image.</span>
+            </div>
+            
+            <label class="field field-wide">
+              <span>Display Name</span>
+              <input id="f-display-name" type="text" required placeholder="Runner" maxlength="50">
+            </label>
+            
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Save Profile</button>
+              <span id="profile-msg" class="run-msg" aria-live="polite"></span>
+            </div>
+          </form>
+        </section>
+
+        <!-- Account Info Card -->
+        <section class="card">
+          <h2>Account Details</h2>
+          <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 6px;">
+            <p class="section-desc">Email: <strong id="info-email" style="color: var(--ink);">...</strong></p>
+            <p class="section-desc">User ID: <code id="info-uid" style="font-size: 0.8rem;">...</code></p>
+            <p class="section-desc">Registered on: <span id="info-joined" style="font-weight: 600;">...</span></p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Floating Action Button for Logging Runs -->
+    <button id="btn-open-log" class="fab">
+      <span>+ Run</span>
+    </button>
+
+    <footer class="app-footer">
+      <span id="conn-note"></span>
+    </footer>
+  </div>
+
+  <!-- ===================== Modal: Log a Run ===================== -->
+  <div id="run-log-modal" class="modal" hidden>
+    <div class="modal-card" style="text-align: left;">
       <h2>Log a run</h2>
-      <form id="run-form" class="run-form">
+      <form id="run-form" class="run-form" style="margin-top: 10px;">
         <div class="field field-wide import-row">
           <span>Import from watch <em>optional</em></span>
           <label class="import-btn">
             <input id="f-file" type="file" accept=".fit,.tcx,.gpx" hidden>
-            <span>📥 Choose a .fit / .tcx / .gpx file</span>
+            <span>Choose a .fit / .tcx / .gpx file</span>
           </label>
           <span id="import-msg" class="import-msg" aria-live="polite"></span>
+          <span class="import-hint">On Android, install this app then tap <strong>Share · Run Club</strong> straight from Garmin · no file picking.</span>
         </div>
         <label class="field">
           <span>Distance (km)</span>
@@ -81,44 +296,28 @@
           <span>Notes / route <em>optional</em></span>
           <input id="f-notes" type="text" maxlength="140" placeholder="Riverside loop, felt great">
         </label>
-        <div class="form-actions">
+        <div class="form-actions" style="justify-content: flex-end; margin-top: 10px;">
+          <button type="button" id="btn-close-log" class="btn btn-ghost">Cancel</button>
           <button type="submit" class="btn btn-primary">Add run</button>
-          <span id="run-msg" class="run-msg" aria-live="polite"></span>
         </div>
+        <span id="run-msg" class="run-msg" aria-live="polite"></span>
       </form>
-    </section>
-
-    <div class="grid-2">
-      <!-- Leaderboard -->
-      <section class="card">
-        <div class="card-head">
-          <h2>Leaderboard</h2>
-          <div class="seg" role="tablist" aria-label="Leaderboard range">
-            <button class="seg-btn active" data-range="week" role="tab">This week</button>
-            <button class="seg-btn" data-range="month" role="tab">This month</button>
-            <button class="seg-btn" data-range="all" role="tab">All time</button>
-          </div>
-        </div>
-        <ol id="leaderboard" class="leaderboard"></ol>
-      </section>
-
-      <!-- Recent runs -->
-      <section class="card">
-        <div class="card-head">
-          <h2>Recent runs</h2>
-          <label class="mine-toggle">
-            <input type="checkbox" id="only-mine"> Only mine
-          </label>
-        </div>
-        <ul id="run-list" class="run-list"></ul>
-      </section>
     </div>
-
-    <footer class="app-footer">
-      <span id="conn-note"></span>
-    </footer>
   </div>
 
-  <script type="module" src="./app.js?v=1"></script>
+  <!-- ===================== Invite Modal Overlay ===================== -->
+  <div id="invite-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="invite-title">Invitation</h2>
+      <p id="invite-desc">Loading invitation details...</p>
+      <div class="modal-actions">
+        <button id="btn-invite-accept" class="btn btn-primary btn-block">Accept</button>
+        <button id="btn-invite-decline" class="btn btn-ghost btn-block">Decline</button>
+      </div>
+      <p id="invite-error" class="gate-error" role="alert" hidden></p>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js?v=4"></script>
 </body>
 </html>
