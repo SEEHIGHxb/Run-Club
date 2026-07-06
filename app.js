@@ -8,6 +8,7 @@ import { APP_PASSCODE, ROSTER } from './config.js';
 import {
   isConfigured, fetchRuns, addRun, deleteRun, subscribeToRuns,
 } from './db.js';
+import { parseActivityFile } from './parse.js';
 
 // ---- Persistent identity (device-local, not a real account) ----------------
 const NAME_KEY = 'runclub.name';
@@ -38,6 +39,7 @@ function init() {
   $('#gate-form').addEventListener('submit', onGateSubmit);
   $('#run-form').addEventListener('submit', onAddRun);
   $('#btn-switch').addEventListener('click', switchUser);
+  $('#f-file').addEventListener('change', onFilePicked);
   $('#f-date').value = todayISO();
 
   $('#only-mine').addEventListener('change', (e) => {
@@ -216,6 +218,32 @@ function renderRuns() {
 // ---------------------------------------------------------------------------
 //  Mutations
 // ---------------------------------------------------------------------------
+// Parse an uploaded .fit/.tcx/.gpx and pre-fill the form. The user still
+// reviews the values and presses "Add run", so a bad file can't auto-insert.
+async function onFilePicked(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const msg = $('#import-msg');
+  msg.textContent = `Reading ${file.name}…`;
+  try {
+    const { distanceKm, durationMin, dateISO } = await parseActivityFile(file);
+    if (distanceKm > 0) $('#f-distance').value = distanceKm;
+    if (durationMin != null) $('#f-duration').value = durationMin;
+    if (dateISO) $('#f-date').value = dateISO;
+
+    const bits = [];
+    if (distanceKm > 0) bits.push(`${distanceKm} km`);
+    if (durationMin != null) bits.push(`${durationMin} min`);
+    msg.textContent = bits.length
+      ? `Imported ${bits.join(' · ')} — review and press “Add run”.`
+      : 'File read, but no distance found. Enter it manually.';
+  } catch (err) {
+    msg.textContent = err.message;
+  } finally {
+    e.target.value = ''; // let the same file be re-picked if needed
+  }
+}
+
 async function onAddRun(e) {
   e.preventDefault();
   const msg = $('#run-msg');

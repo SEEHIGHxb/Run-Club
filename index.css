@@ -118,6 +118,17 @@ code { background: #f1f5f9; padding: 1px 5px; border-radius: 5px; font-size: .9e
 .form-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
 .run-msg { font-size: .85rem; color: var(--muted); }
 
+/* ---- Activity file import ---- */
+.import-row { gap: 7px; }
+.import-btn {
+  display: inline-flex; align-items: center; gap: 8px; width: fit-content;
+  padding: 10px 14px; border: 1px dashed var(--brand); border-radius: 10px;
+  background: var(--brand-soft); color: var(--brand); font-weight: 600;
+  font-size: .88rem; cursor: pointer; transition: .15s;
+}
+.import-btn:hover { filter: brightness(.97); }
+.import-msg { font-size: .82rem; color: var(--muted); min-height: 1em; }
+
 /* ---- Segmented control ---- */
 .seg { display: inline-flex; background: #f1f5f9; border-radius: 9px; padding: 3px; }
 .seg-btn {
