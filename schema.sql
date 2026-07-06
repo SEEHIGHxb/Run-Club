@@ -115,7 +115,7 @@ create policy "Remove friendship" on public.friends for delete using (auth.uid()
 
 -- Groups & Members
 create policy "View groups in memberships" on public.groups for select using (
-  public.is_group_member(id, auth.uid())
+  auth.uid() = created_by or public.is_group_member(id, auth.uid())
 );
 create policy "Create group" on public.groups for insert with check (auth.uid() = created_by);
 create policy "Update group details" on public.groups for update using (
