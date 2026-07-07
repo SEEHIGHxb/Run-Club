@@ -1,5 +1,5 @@
 // ============================================================================
-//  Run or Lose Club · Data layer (Supabase)
+//  Runaway · Data layer (Supabase)
 //  Wraps all authentication, reads/writes, and realtime subscriptions.
 // ============================================================================
 
@@ -171,10 +171,17 @@ export async function fetchPendingRequests() {
   return { incoming, outgoing };
 }
 
+// Matches a canonical UUID (Supabase user ids). Validating here keeps a
+// free-text friend id out of the PostgREST .or() filter string below, where
+// stray commas/parens would otherwise corrupt the query.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function sendFriendRequest(friendId) {
   const { data: { session } } = await supabase.auth.getSession();
   const myId = session?.user?.id;
   if (!myId) throw new Error('Not authenticated');
+
+  if (!UUID_RE.test(friendId)) throw new Error('That does not look like a valid User ID.');
 
   // Check if friendship already exists
   const { data: existing, error: checkErr } = await supabase
@@ -330,33 +337,23 @@ export async function getOrCreateGroupInvite(groupId) {
 }
 
 export async function fetchInvite(code) {
-  const { data, error } = await supabase
-    .from('group_invites')
-    .select('*, groups:group_id(name)')
-    .eq('code', code);
+  // get_invite is a SECURITY DEFINER RPC so a prospective member (not yet in the
+  // group) can preview just this one group's name; the group_invites table itself
+  // is readable only by existing members.
+  const { data, error } = await supabase.rpc('get_invite', { invite_code: code });
   if (error) throw error;
-  return data && data.length > 0 ? data[0] : null;
+  if (!data || data.length === 0) return null;
+  // Preserve the previous shape ({ group_id, groups: { name } }) for callers.
+  return { group_id: data[0].group_id, groups: { name: data[0].group_name } };
 }
 
 export async function joinGroupByCode(code) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const myId = session?.user?.id;
-  if (!myId) throw new Error('Not authenticated');
-
-  const invite = await fetchInvite(code);
-  if (!invite) throw new Error('Invalid invite code');
-
-  const { error } = await supabase
-    .from('group_members')
-    .insert({
-      group_id: invite.group_id,
-      user_id: myId,
-      role: 'member',
-    });
-
-  if (error && error.code !== '23505') throw error; // 23505 = unique_violation
-
-  return invite.groups;
+  // Joining goes through a SECURITY DEFINER RPC that validates the code, so a
+  // user can't add themselves to an arbitrary group by guessing its UUID.
+  const { data, error } = await supabase.rpc('join_group_by_code', { invite_code: code });
+  if (error) throw error;
+  if (!data || data.length === 0) throw new Error('Invalid invite code');
+  return { name: data[0].group_name };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 // ============================================================================
-//  Run or Lose Club — App logic
+//  Runaway — App logic
 //  Handles login/logout, navigation tabs, theme toggling, friend system,
 //  group invitations, floating log modals, and zero-sum Baht calculations.
 // ============================================================================
@@ -664,14 +664,10 @@ function renderAll() {
 //  Summary Panel rendering
 // ---------------------------------------------------------------------------
 function renderSummary() {
-  const totalKm = sum(runs.map((r) => Number(r.distance_km)));
-  const runners = new Set(runs.map((r) => r.user_id)).size;
   const myKm = sum(runs.filter((r) => r.user_id === me.id).map((r) => Number(r.distance_km)));
-  
+
   const cards = [
-    { label: 'Total distance', value: fmtKm(totalKm) },
     { label: 'Runs logged', value: String(runs.length) },
-    { label: 'Runners', value: String(runners) },
     { label: 'Your distance', value: fmtKm(myKm) },
   ];
   
@@ -809,10 +805,11 @@ function renderBahtChallenge(ranked) {
           <div class="user-profile">
             ${avatarImg(row.avatar, ' style="width:20px; height:20px;"')}
             <span class="lb-name" style="font-size:0.9rem;">${escapeHtml(row.name)}</span>
+            ${isMe ? '<span class="you-chip">You</span>' : ''}
           </div>
           <span></span>
           <span class="baht-badge ${badgeClass}">
-            ${isMe ? 'You ' : ''}${text}
+            ${text}
           </span>
         </li>`;
     })

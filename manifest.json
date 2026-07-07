@@ -1,6 +1,6 @@
 {
-  "name": "Run or Lose Club",
-  "short_name": "Run or Lose Club",
+  "name": "Runaway",
+  "short_name": "Runaway",
   "description": "Live group run tracker and challenge dashboard.",
   "start_url": "./",
   "scope": "./",
@@ -8,8 +8,8 @@
   "background_color": "#f9f9f9",
   "theme_color": "#ff0000",
   "icons": [
-    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "./icons/runorlose.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/runorlose.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ],
   "share_target": {
     "action": "./share-target",

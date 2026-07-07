@@ -1,5 +1,5 @@
 // ============================================================================
-//  Run or Lose Club · Activity file parser
+//  Runaway · Activity file parser
 //  Parses an uploaded workout file (.fit / .tcx / .gpx) entirely in the
 //  browser and returns a normalized summary: { distanceKm, durationMin,
 //  dateISO }. Consumed by app.js. FIT (Garmin's binary format) uses Garmin's

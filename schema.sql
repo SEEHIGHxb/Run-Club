@@ -1,5 +1,5 @@
 -- ============================================================================
---  Run Club — Database Schema
+--  Runaway — Database Schema
 --  Paste this entire file into the Supabase SQL Editor.
 -- ============================================================================
 
@@ -107,6 +107,57 @@ begin
 end;
 $$;
 
+-- Preview a group invite by its code without exposing the whole invites table.
+-- Runs as definer so a prospective member (not yet in the group) can read just
+-- the one group's name for the confirmation modal.
+create or replace function public.get_invite(invite_code text)
+returns table (group_id uuid, group_name text)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select g.id, g.name
+  from public.group_invites gi
+  join public.groups g on g.id = gi.group_id
+  where gi.code = invite_code;
+end;
+$$;
+
+-- Join a group using a valid invite code. SECURITY DEFINER so membership can
+-- only ever be created against a real code — never by guessing a group UUID.
+create or replace function public.join_group_by_code(invite_code text)
+returns table (group_id uuid, group_name text)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_group_id uuid;
+  v_group_name text;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select g.id, g.name into v_group_id, v_group_name
+  from public.group_invites gi
+  join public.groups g on g.id = gi.group_id
+  where gi.code = invite_code;
+
+  if v_group_id is null then
+    raise exception 'Invalid invite code';
+  end if;
+
+  insert into public.group_members (group_id, user_id, role)
+  values (v_group_id, auth.uid(), 'member')
+  on conflict (group_id, user_id) do nothing;
+
+  return query select v_group_id, v_group_name;
+end;
+$$;
+
 -- ============================================================================
 -- Row Level Security (RLS) Policies
 -- ============================================================================
@@ -127,7 +178,9 @@ create policy "Update profile" on public.profiles for update using (auth.uid() =
 -- Friends: viewable, insertable, updatable, and deletable by the two involved users
 create policy "View friendships" on public.friends for select using (auth.uid() = user_id or auth.uid() = friend_id);
 create policy "Create friendship request" on public.friends for insert with check (auth.uid() = user_id);
-create policy "Accept friendship request" on public.friends for update using (auth.uid() = user_id or auth.uid() = friend_id);
+create policy "Accept friendship request" on public.friends for update
+  using (auth.uid() = user_id or auth.uid() = friend_id)
+  with check (auth.uid() = user_id or auth.uid() = friend_id);
 create policy "Remove friendship" on public.friends for delete using (auth.uid() = user_id or auth.uid() = friend_id);
 
 -- Groups & Members
@@ -135,20 +188,30 @@ create policy "View groups in memberships" on public.groups for select using (
   auth.uid() = created_by or public.is_group_member(id, auth.uid())
 );
 create policy "Create group" on public.groups for insert with check (auth.uid() = created_by);
-create policy "Update group details" on public.groups for update using (
-  public.is_group_owner(id, auth.uid())
-);
+create policy "Update group details" on public.groups for update
+  using (public.is_group_owner(id, auth.uid()))
+  with check (public.is_group_owner(id, auth.uid()));
 
 create policy "View group memberships" on public.group_members for select using (
   public.is_group_member(group_id, auth.uid())
 );
-create policy "Join group" on public.group_members for insert with check (auth.uid() = user_id);
+-- Direct self-insert is limited to the group's creator (the owner row created in
+-- createGroup()). Everyone else joins through join_group_by_code() below, which
+-- runs as SECURITY DEFINER and only inserts against a valid invite code — so a
+-- user can never add themselves to a group by guessing its UUID.
+create policy "Join group" on public.group_members for insert with check (
+  auth.uid() = user_id
+  and exists (select 1 from public.groups g where g.id = group_id and g.created_by = auth.uid())
+);
 create policy "Leave or kick group member" on public.group_members for delete using (
   auth.uid() = user_id or public.is_group_owner(group_id, auth.uid())
 );
 
--- Invites: public select (so visitors can read group info to join), insert by group members
-create policy "Read group invites" on public.group_invites for select using (true);
+-- Invites: only members can read their group's code (to share it); insert by members.
+-- Non-members preview/join a code through get_invite()/join_group_by_code() instead.
+create policy "Read group invites" on public.group_invites for select using (
+  public.is_group_member(group_id, auth.uid())
+);
 create policy "Create group invites" on public.group_invites for insert with check (
   public.is_group_member(group_id, auth.uid())
 );
@@ -210,3 +273,46 @@ select
   coalesce(raw_user_meta_data->>'avatar_url', raw_user_meta_data->>'picture')
 from auth.users
 on conflict (id) do nothing;
+
+-- ============================================================================
+-- Storage: avatars bucket (custom profile picture uploads)
+-- Without this bucket, uploadAvatar() in db.js fails with "Bucket not found".
+-- ============================================================================
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
+-- Storage policies live on storage.objects (which we never drop), so guard the
+-- re-run case by dropping first — unlike the table policies above, whose tables
+-- are dropped and recreated fresh at the top of this file.
+drop policy if exists "Avatar images are publicly readable" on storage.objects;
+drop policy if exists "Users can upload their own avatar" on storage.objects;
+drop policy if exists "Users can update their own avatar" on storage.objects;
+drop policy if exists "Users can delete their own avatar" on storage.objects;
+
+-- Public read; write limited to the uploader's own folder. uploadAvatar() stores
+-- files at "<uid>/<timestamp>.<ext>", so the first path segment is the owner id.
+create policy "Avatar images are publicly readable"
+  on storage.objects for select
+  using (bucket_id = 'avatars');
+
+create policy "Users can upload their own avatar"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "Users can update their own avatar"
+  on storage.objects for update
+  using (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "Users can delete their own avatar"
+  on storage.objects for delete
+  using (
+    bucket_id = 'avatars'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );

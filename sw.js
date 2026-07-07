@@ -1,7 +1,7 @@
 // ============================================================================
-//  Run or Lose Club · Service Worker
+//  Runaway · Service Worker
 //  Sole job: receive activity files shared from other apps via the Android
-//  share sheet ("Share · Run or Lose Club"). Garmin Connect / Strava / a file manager
+//  share sheet ("Share · Runaway"). Garmin Connect / Strava / a file manager
 //  POST the file here; we stash it in a cache and redirect the page to
 //  ./?share-target=1, where app.js picks it up and imports it automatically.
 //  No asset caching is done, so the ?v= cache-busting in index.html keeps

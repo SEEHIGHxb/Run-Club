@@ -1,5 +1,5 @@
 // ============================================================================
-//  Run Club — Configuration
+//  Runaway — Configuration
 //  See README.md for how to get the Supabase URL + anon key.
 // ============================================================================
 

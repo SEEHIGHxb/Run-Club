@@ -1,4 +1,4 @@
-# Run or Lose Club
+# Runaway
 
 A tiny, real-time group run tracker for a small circle of friends.
 Log your runs · distance, date, duration, notes · and everyone sees a shared, live-updating leaderboard and zero-sum Baht loss pool. No build step, no server to run: it's a static site backed by Supabase.
@@ -19,7 +19,8 @@ Log your runs · distance, date, duration, notes · and everyone sees a shared, 
 ### 2. Create the tables
 1. In the project, open **SQL Editor** · **New query**.
 2. Copy the entire contents of `schema.sql`, paste, and click **Run**.
-   * This creates the required tables, sets access policies, and turns on realtime.
+   * This creates the required tables, sets access policies, turns on realtime, and creates the `avatars` storage bucket used for custom profile pictures.
+   * Re-run the whole file any time you pull schema changes (note: it drops and recreates the tables, so it also clears existing data).
 
 ### 3. Setup Google OAuth in Google Cloud Console
 1. Go to the [Google Cloud Console Credentials Page](https://console.cloud.google.com/apis/credentials).

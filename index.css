@@ -1,5 +1,5 @@
 /* ===========================================================================
-   Run or Lose Club — styles. Vanilla CSS, no build. Red-aligned athletic theme.
+   Runaway — styles. Vanilla CSS, no build. Red-aligned athletic theme.
    =========================================================================== */
 :root {
   --bg: #f9f9f9;
@@ -15,7 +15,7 @@
   --shadow: 0 1px 3px rgba(15, 23, 42, .05), 0 8px 24px rgba(15, 23, 42, .04);
   --radius: 14px;
   --switch-bg: #e5e5e5;
-  --switch-handle: #cc0000;
+  --switch-handle: #ff0000;
   --transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -219,12 +219,12 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 }
 
 /* ---- Summary strip ---- */
-.summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .stat {
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 14px; text-align: center; transition: background var(--transition);
 }
-.stat-value { font-size: 1.4rem; font-weight: 800; color: var(--brand); letter-spacing: -.02em; }
+.stat-value { font-size: 1.4rem; font-weight: 800; color: var(--ink); letter-spacing: -.02em; }
 .stat-label { font-size: .74rem; color: var(--muted); margin-top: 2px; }
 
 /* ---- Cards ---- */
@@ -254,7 +254,7 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 .import-btn:hover { filter: brightness(.95); }
 .import-msg { font-size: .82rem; color: var(--muted); min-height: 1em; }
 .import-hint { font-size: .76rem; color: var(--muted); opacity: .85; }
-.import-hint strong { color: var(--brand); }
+.import-hint strong { color: var(--ink); }
 
 /* ---- Segmented control ---- */
 .seg { display: inline-flex; background: var(--bg); border-radius: 9px; padding: 3px; }
@@ -285,7 +285,14 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 .lb-rank { font-size: 1.05rem; text-align: center; font-weight: 700; color: var(--muted); }
 .lb-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lb-runs { font-size: .76rem; color: var(--muted); }
-.lb-km { font-weight: 800; color: var(--brand); }
+.lb-km { font-weight: 800; color: var(--ink); }
+
+/* Grey "You" pill shown after the current user's name in the pool list. */
+.you-chip {
+  display: inline-block; margin-left: 6px; padding: 1px 9px;
+  border-radius: 50px; background: var(--switch-bg); color: var(--muted);
+  font-size: 0.68rem; font-weight: 700; vertical-align: middle;
+}
 
 /* ---- Baht Pool Indicators ---- */
 .baht-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.85rem; font-weight: 700; }
@@ -298,7 +305,7 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 .run-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 460px; overflow: auto; }
 .run-item { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
 .run-main { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.run-km { font-weight: 800; color: var(--brand); font-size: 1.05rem; }
+.run-km { font-weight: 800; color: var(--ink); font-size: 1.05rem; }
 .run-runner { font-weight: 600; }
 .run-pace { font-size: .76rem; color: var(--accent); font-weight: 700; background: #fffbeb; padding: 1px 7px; border-radius: 20px; }
 [data-theme="dark"] .run-pace { background: #3b2c00; color: #fbbf24; }
@@ -395,5 +402,12 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 @media (max-width: 680px) {
   .summary { grid-template-columns: repeat(2, 1fr); }
   .grid-2 { grid-template-columns: 1fr; }
-  .run-form { grid-template-columns: 1fr; }
+
+  /* Run form stacks to a single column, except Duration + Date, which share one
+     row (Duration on the left, Date on the right). Duration follows Date in the
+     DOM, so `dense` back-fills the left cell to keep them side by side. */
+  .run-form { grid-template-columns: 1fr 1fr; grid-auto-flow: row dense; }
+  .run-form > * { grid-column: 1 / -1; }
+  .run-form > .field:has(#f-duration) { grid-column: 1 / 2; }
+  .run-form > .field:has(#f-date) { grid-column: 2 / 3; }
 }

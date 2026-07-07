@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Run or Lose Club</title>
+  <title>Runaway</title>
   <meta name="theme-color" content="#ff0000">
-  <link rel="icon" type="image/png" href="./icons/icon-192.png?v=2">
+  <link rel="icon" type="image/png" href="./icons/runorlose.png?v=1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./index.css?v=6">
+  <link rel="stylesheet" href="./index.css?v=8">
   <link rel="manifest" href="./manifest.json">
-  <link rel="apple-touch-icon" href="./icons/icon-192.png?v=2">
+  <link rel="apple-touch-icon" href="./icons/runorlose.png?v=1">
 </head>
 <body>
   <!-- Boot loader: shown until Supabase restores the session, so refreshing the
@@ -39,8 +39,8 @@
   <!-- ===================== Gate (Google Sign In) ===================== -->
   <div id="gate" class="gate">
     <div class="gate-card">
-      <img src="./icons/runorlose.png" alt="Run or Lose Club logo" class="gate-logo">
-      <h1>Run or Lose Club</h1>
+      <img src="./icons/runorlose.png" alt="Runaway logo" class="gate-logo">
+      <h1>Runaway</h1>
       <p class="gate-sub">A real-time group run tracker. Sign in to start tracking runs, joining groups, and logging with friends.</p>
       
       <p id="gate-error" class="gate-error" role="alert" hidden></p>
@@ -57,7 +57,7 @@
   <div id="app" class="app-container" hidden>
     <header class="app-header">
       <div class="brand">
-        <h1>Run or Lose Club</h1>
+        <h1>Runaway</h1>
       </div>
       <div class="header-right">
         <!-- Draggable Theme Switch -->
@@ -283,6 +283,7 @@
     </button>
 
     <footer class="app-footer">
+      <span id="live-dot" class="live-dot"></span>
       <span id="conn-note"></span>
     </footer>
   </div>
@@ -299,7 +300,7 @@
             <span>Choose a .fit / .tcx / .gpx file</span>
           </label>
           <span id="import-msg" class="import-msg" aria-live="polite"></span>
-          <span class="import-hint">On Android, install this app then tap <strong>Share · Run Club</strong> straight from Garmin · no file picking.</span>
+          <span class="import-hint">On Android, install this app then tap <strong>Share · Runaway</strong> straight from Garmin · no file picking.</span>
         </div>
         <label class="field">
           <span>Distance (km)</span>
@@ -339,6 +340,6 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=5"></script>
+  <script type="module" src="./app.js?v=7"></script>
 </body>
 </html>
