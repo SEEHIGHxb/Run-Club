@@ -17,6 +17,24 @@
   <!-- Boot loader: shown until Supabase restores the session, so refreshing the
        page never flashes the login gate before dropping the user back into the app. -->
   <div id="boot" class="boot"><div class="boot-spinner"></div></div>
+  <script>
+    // Runs immediately (no module / CDN dependency) so the spinner can never
+    // hang behind app.js's Supabase import. If there's no stored session we're
+    // showing the login gate anyway — reveal it at once. Either way, hard-cap
+    // the loader so a slow/offline bundle can't trap the user on the spinner.
+    (function () {
+      var boot = document.getElementById('boot');
+      if (!boot) return;
+      var hide = function () { boot.hidden = true; };
+      try {
+        var hasSession = Object.keys(localStorage).some(function (k) {
+          return k.indexOf('sb-') === 0 && k.indexOf('-auth-token') !== -1;
+        });
+        if (!hasSession) hide();
+      } catch (e) { hide(); }
+      setTimeout(hide, 8000);
+    })();
+  </script>
 
   <!-- ===================== Gate (Google Sign In) ===================== -->
   <div id="gate" class="gate">
