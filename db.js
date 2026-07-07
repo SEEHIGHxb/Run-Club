@@ -312,7 +312,20 @@ export async function getOrCreateGroupInvite(groupId) {
     .select()
     .single();
 
-  if (error) throw error;
+  // 23505 = unique_violation: a concurrent call already created the code for
+  // this group (unique(group_id)). Re-read and return the winner's code.
+  if (error) {
+    if (error.code === '23505') {
+      const { data: raced, error: reErr } = await supabase
+        .from('group_invites')
+        .select('code')
+        .eq('group_id', groupId)
+        .limit(1);
+      if (reErr) throw reErr;
+      if (raced && raced.length > 0) return raced[0].code;
+    }
+    throw error;
+  }
   return data.code;
 }
 

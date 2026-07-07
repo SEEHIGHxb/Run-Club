@@ -5,18 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Run or Lose Club</title>
   <meta name="theme-color" content="#ff0000">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='80'>R</text></svg>">
+  <link rel="icon" type="image/png" href="./icons/icon-192.png?v=2">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./index.css?v=5">
+  <link rel="stylesheet" href="./index.css?v=6">
   <link rel="manifest" href="./manifest.json">
-  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png?v=2">
 </head>
 <body>
+  <!-- Boot loader: shown until Supabase restores the session, so refreshing the
+       page never flashes the login gate before dropping the user back into the app. -->
+  <div id="boot" class="boot"><div class="boot-spinner"></div></div>
+
   <!-- ===================== Gate (Google Sign In) ===================== -->
   <div id="gate" class="gate">
     <div class="gate-card">
+      <img src="./icons/runorlose.png" alt="Run or Lose Club logo" class="gate-logo">
       <h1>Run or Lose Club</h1>
       <p class="gate-sub">A real-time group run tracker. Sign in to start tracking runs, joining groups, and logging with friends.</p>
       
@@ -35,7 +40,6 @@
     <header class="app-header">
       <div class="brand">
         <h1>Run or Lose Club</h1>
-        <p>Group run tracker · live</p>
       </div>
       <div class="header-right">
         <!-- Draggable Theme Switch -->
@@ -44,7 +48,6 @@
           <button class="theme-seg-btn" data-theme-choice="dark">Dark</button>
           <div class="theme-seg-handle"></div>
         </div>
-        <span id="live-dot" class="live-dot" title="Realtime connection"></span>
         <div class="user-profile">
           <img id="who-avatar" class="avatar" src="" alt="" hidden>
           <span class="who">Hi, <strong id="who-name">…</strong></span>
@@ -67,7 +70,7 @@
         <label class="view-filter-label">
           <span>Viewing:</span>
           <select id="feed-filter" class="filter-select">
-            <option value="friends">All Friends & Me</option>
+            <option value="friends">All</option>
           </select>
         </label>
       </div>
@@ -128,7 +131,7 @@
             <form id="friend-add-form" class="run-form">
               <label class="field field-wide">
                 <span>Friend's User ID</span>
-                <input id="f-friend-id" type="text" required placeholder="Paste user ID here..." maxlength="50">
+                <input id="f-friend-id" type="text" required maxlength="50">
               </label>
               <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Send Friend Request</button>
@@ -167,7 +170,7 @@
           <form id="group-create-form" class="run-form">
             <label class="field field-wide">
               <span>Group Name</span>
-              <input id="f-group-name" type="text" required placeholder="e.g. Night Runners Club" maxlength="50">
+              <input id="f-group-name" type="text" required maxlength="50">
             </label>
             <div class="form-actions">
               <button type="submit" class="btn btn-primary">Create Group</button>
@@ -182,7 +185,7 @@
           <form id="group-join-form" class="run-form">
             <label class="field field-wide">
               <span>Invite Code</span>
-              <input id="f-invite-code" type="text" required placeholder="e.g. Z9KJ5P" maxlength="10">
+              <input id="f-invite-code" type="text" required maxlength="10">
             </label>
             <div class="form-actions">
               <button type="submit" class="btn btn-primary">Join Group</button>
@@ -234,7 +237,7 @@
             
             <label class="field field-wide">
               <span>Display Name</span>
-              <input id="f-display-name" type="text" required placeholder="Runner" maxlength="50">
+              <input id="f-display-name" type="text" required maxlength="50">
             </label>
             
             <div class="form-actions">
@@ -282,7 +285,7 @@
         </div>
         <label class="field">
           <span>Distance (km)</span>
-          <input id="f-distance" type="number" step="0.01" min="0.01" required placeholder="5.0">
+          <input id="f-distance" type="number" step="0.01" min="0.01" required>
         </label>
         <label class="field">
           <span>Date</span>
@@ -290,11 +293,11 @@
         </label>
         <label class="field">
           <span>Duration (min) <em>optional</em></span>
-          <input id="f-duration" type="number" step="0.1" min="0.1" placeholder="30">
+          <input id="f-duration" type="number" step="0.1" min="0.1">
         </label>
         <label class="field field-wide">
           <span>Notes / route <em>optional</em></span>
-          <input id="f-notes" type="text" maxlength="140" placeholder="Riverside loop, felt great">
+          <input id="f-notes" type="text" maxlength="140">
         </label>
         <div class="form-actions" style="justify-content: flex-end; margin-top: 10px;">
           <button type="button" id="btn-close-log" class="btn btn-ghost">Cancel</button>
@@ -318,6 +321,6 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=4"></script>
+  <script type="module" src="./app.js?v=5"></script>
 </body>
 </html>

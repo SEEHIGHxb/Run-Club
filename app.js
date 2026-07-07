@@ -37,6 +37,9 @@ const $ = (sel) => document.querySelector(sel);
 // ---- State Management ------------------------------------------------------
 let me = null;                  // current logged-in user profile
 let runs = [];                  // runs cache
+let poolRoster = [];            // everyone eligible for the Run-or-Lose pool
+                                // (friends+me, or the active group's members),
+                                // so non-runners are counted at 0 km.
 let range = 'week';             // week | month | all
 let onlyMine = false;
 let unsubscribe = null;
@@ -46,6 +49,7 @@ let activeManageGroupId = null; // currently selected group ID for members view
 let pendingAction = null;       // friend link or group invite action
 let pendingSharedFile = null;   // watch activity files from Android share sheet
 let sharedHandled = false;
+let authResolved = false;       // has Supabase emitted its first auth event yet?
 
 // ---------------------------------------------------------------------------
 //  Startup
@@ -75,6 +79,7 @@ function init() {
 
   // 2. Auth state change listener
   onAuthChange(async (event, session) => {
+    authResolved = true;
     if (session) {
       try {
         me = await fetchProfile(session.user.id);
@@ -86,7 +91,6 @@ function init() {
             id: session.user.id,
             display_name: userMeta.full_name || userMeta.name || 'Runner',
             avatar_url: userMeta.avatar_url || userMeta.picture || '',
-            email: session.user.email
           };
           const { data, error } = await supabase.from('profiles').insert(fallback).select().single();
           if (error) throw error;
@@ -102,6 +106,16 @@ function init() {
       exitApp();
     }
   });
+
+  // Safety net: if Supabase never emits an auth event (network stalls, etc.),
+  // stop showing the boot loader after a few seconds and fall back to the gate
+  // instead of leaving the user staring at a spinner forever.
+  setTimeout(() => {
+    if (!authResolved) {
+      hideBoot();
+      exitApp();
+    }
+  }, 6000);
 
   // 3. Bind standard UI event listeners
   $('#btn-login-google').addEventListener('click', loginWithGoogle);
@@ -402,6 +416,7 @@ function closeInviteModal() {
 //  Auth Flow Controls
 // ---------------------------------------------------------------------------
 async function enterApp() {
+  hideBoot();
   $('#gate').style.display = 'none';
   $('#app').hidden = false;
   
@@ -440,6 +455,7 @@ async function enterApp() {
 }
 
 function exitApp() {
+  hideBoot();
   $('#app').hidden = true;
   $('#gate').style.display = '';
   $('#gate-error').hidden = true;
@@ -574,11 +590,48 @@ async function onProfileSubmit(e) {
 async function loadRuns() {
   try {
     runs = await fetchRuns(activeGroupId);
+    poolRoster = await buildPoolRoster();
     setLive(true);
     renderAll();
   } catch (err) {
     setLive(false);
     $('#conn-note').textContent = 'Could not fetch runs: ' + err.message;
+  }
+}
+
+// The set of people who should be in the Run-or-Lose pool for the current view.
+// In a group view that's every group member; otherwise it's me plus my accepted
+// friends. Anyone here who hasn't logged a run counts as 0 km — that's the point
+// of the challenge. Returns [{ userId, name, avatar }].
+async function buildPoolRoster() {
+  try {
+    if (activeGroupId) {
+      const members = await fetchGroupMembers(activeGroupId);
+      return members.map((m) => ({
+        userId: m.id,
+        name: m.display_name || 'Anonymous',
+        avatar: m.avatar_url || '',
+      }));
+    }
+    const friends = await fetchFriends();
+    const roster = [{
+      userId: me.id,
+      name: me.display_name || 'Anonymous',
+      avatar: me.avatar_url || '',
+    }];
+    for (const f of friends) {
+      if (f.user) {
+        roster.push({
+          userId: f.user.id,
+          name: f.user.display_name || 'Anonymous',
+          avatar: f.user.avatar_url || '',
+        });
+      }
+    }
+    return roster;
+  } catch (err) {
+    console.error('Error building pool roster:', err);
+    return [];
   }
 }
 
@@ -662,7 +715,7 @@ function renderLeaderboard() {
       <li class="lb-row${row.userId === me.id ? ' is-me' : ''}">
         <span class="lb-rank">${i + 1}</span>
         <div class="user-profile">
-          ${row.avatar ? `<img class="avatar" style="width:24px; height:24px;" src="${row.avatar}">` : ''}
+          ${avatarImg(row.avatar, ' style="width:24px; height:24px;"')}
           <span class="lb-name">${escapeHtml(row.name)}</span>
         </div>
         <span class="lb-runs">${row.runs} run${row.runs === 1 ? '' : 's'}</span>
@@ -678,14 +731,28 @@ function renderBahtChallenge(ranked) {
   const bahtList = $('#baht-challenge-list');
   if (!bahtList) return;
 
-  if (ranked.length <= 1) {
+  // Build the full pool: every eligible person (poolRoster) seeded at 0 km,
+  // then overlaid with the km they actually logged in this range. Someone who
+  // didn't run stays at 0 and takes the biggest loss — "Run or Lose". We also
+  // fold in any ranked runner not on the roster (e.g. a group co-member visible
+  // in the "All" feed) so the leaderboard and pool stay in sync.
+  const pool = new Map();
+  for (const m of poolRoster) {
+    pool.set(m.userId, { userId: m.userId, name: m.name, avatar: m.avatar, km: 0, runs: 0 });
+  }
+  for (const r of ranked) {
+    pool.set(r.userId, { userId: r.userId, name: r.name, avatar: r.avatar, km: r.km, runs: r.runs });
+  }
+  const participants = [...pool.values()].sort((a, b) => b.km - a.km);
+
+  if (participants.length <= 1) {
     bahtList.innerHTML = `<li class="empty">Need at least 2 runners to calculate pool.</li>`;
     return;
   }
 
   // 1. Calculate raw diff for each runner comparing to average of others
-  const runnersCalculated = ranked.map((row) => {
-    const otherRunners = ranked.filter((r) => r.userId !== row.userId);
+  const runnersCalculated = participants.map((row) => {
+    const otherRunners = participants.filter((r) => r.userId !== row.userId);
     const otherSum = sum(otherRunners.map(r => r.km));
     const otherAvg = otherSum / otherRunners.length;
     const diff = row.km - otherAvg;
@@ -740,7 +807,7 @@ function renderBahtChallenge(ranked) {
       return `
         <li class="lb-row${isMe ? ' is-me' : ''}" style="grid-template-columns: auto 1fr auto;">
           <div class="user-profile">
-            ${row.avatar ? `<img class="avatar" style="width:20px; height:20px;" src="${row.avatar}">` : ''}
+            ${avatarImg(row.avatar, ' style="width:20px; height:20px;"')}
             <span class="lb-name" style="font-size:0.9rem;">${escapeHtml(row.name)}</span>
           </div>
           <span></span>
@@ -776,7 +843,7 @@ function renderRuns() {
           <div class="run-main">
             <span class="run-km">${fmtKm(r.distance_km)}</span>
             <div class="user-profile" style="display:inline-flex;">
-              ${avatar ? `<img class="avatar" style="width:18px; height:18px; border:1px solid var(--brand)" src="${avatar}">` : ''}
+              ${avatarImg(avatar, ' style="width:18px; height:18px; border:1px solid var(--brand)"')}
               <span class="run-runner">${escapeHtml(runnerName)}</span>
             </div>
             ${pace ? `<span class="run-pace">${pace}</span>` : ''}
@@ -810,7 +877,7 @@ function renderFriendsView(friends, incoming, outgoing) {
         <li class="run-item">
           <div class="run-main" style="justify-content:space-between; width:100%; align-items:center;">
             <div class="user-profile">
-              ${f.user.avatar_url ? `<img class="avatar" src="${f.user.avatar_url}">` : ''}
+              ${avatarImg(f.user.avatar_url)}
               <strong>${escapeHtml(f.user.display_name)}</strong>
             </div>
             <button class="btn btn-ghost btn-sm remove-friend-btn" data-id="${f.friendshipId}">Remove</button>
@@ -832,7 +899,7 @@ function renderFriendsView(friends, incoming, outgoing) {
       .map((req) => `
         <li class="run-item">
           <div class="user-profile">
-            ${req.sender.avatar_url ? `<img class="avatar" src="${req.sender.avatar_url}">` : ''}
+            ${avatarImg(req.sender.avatar_url)}
             <span><strong>${escapeHtml(req.sender.display_name)}</strong> wants to be friends</span>
           </div>
           <div class="run-item-action">
@@ -859,7 +926,7 @@ function renderFriendsView(friends, incoming, outgoing) {
       .map((req) => `
         <li class="run-item">
           <div class="user-profile">
-            ${req.receiver.avatar_url ? `<img class="avatar" src="${req.receiver.avatar_url}">` : ''}
+            ${avatarImg(req.receiver.avatar_url)}
             <span>Pending response from <strong>${escapeHtml(req.receiver.display_name)}</strong></span>
           </div>
           <div class="run-item-action">
@@ -942,7 +1009,7 @@ function renderGroupsView(list) {
 
   const selectedFilter = filter.value;
 
-  filter.innerHTML = `<option value="friends">All Friends & Me</option>`;
+  filter.innerHTML = `<option value="friends">All</option>`;
   list.forEach((g) => {
     const opt = document.createElement('option');
     opt.value = g.id;
@@ -1044,7 +1111,7 @@ async function onManageGroupClick(groupId) {
         <li class="run-item">
           <div class="run-main" style="justify-content:space-between; width:100%; align-items:center;">
             <div class="user-profile">
-              ${m.avatar_url ? `<img class="avatar" src="${m.avatar_url}">` : ''}
+              ${avatarImg(m.avatar_url)}
               <strong>${escapeHtml(m.display_name)}</strong>
             </div>
             <span style="font-size:0.75rem; color:var(--muted); font-weight:600; text-transform:uppercase;">${m.role}</span>
@@ -1163,6 +1230,7 @@ async function onDeleteRun(id) {
 //  Helpers
 // ---------------------------------------------------------------------------
 function showSetupNotice() {
+  hideBoot();
   $('#gate').innerHTML = `
     <div class="gate-card">
       <div class="gate-emoji">🛠️</div>
@@ -1172,12 +1240,19 @@ function showSetupNotice() {
     </div>`;
 }
 
+function hideBoot() {
+  const boot = $('#boot');
+  if (boot) boot.hidden = true;
+}
+
 function setLive(on) {
   const dot = $('#live-dot');
-  if (!dot) return;
-  dot.classList.toggle('on', on);
-  dot.classList.toggle('off', !on);
-  $('#conn-note').textContent = on ? 'Connected · updates live' : 'Offline · retrying…';
+  if (dot) {
+    dot.classList.toggle('on', on);
+    dot.classList.toggle('off', !on);
+  }
+  const note = $('#conn-note');
+  if (note) note.textContent = on ? 'Connected · updates live' : 'Offline · retrying…';
 }
 
 function todayISO() {
@@ -1235,6 +1310,26 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+}
+
+// Sanitize a user-supplied avatar URL before it goes into an <img src> template.
+// Only http(s) URLs pass; anything else (javascript:, attribute-breakout
+// payloads, etc.) becomes empty so the <img> is simply omitted. Callers must
+// still escapeHtml() the result to neutralise quotes in an otherwise valid URL.
+function safeUrl(u) {
+  if (!u) return '';
+  try {
+    const parsed = new URL(u, window.location.href);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : '';
+  } catch {
+    return '';
+  }
+}
+
+// Render an avatar <img> tag from an untrusted URL, or '' when there's none.
+function avatarImg(url, attrs = '') {
+  const safe = safeUrl(url);
+  return safe ? `<img class="avatar"${attrs} src="${escapeHtml(safe)}">` : '';
 }
 
 // ---------------------------------------------------------------------------

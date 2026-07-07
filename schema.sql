@@ -12,11 +12,14 @@ drop table if exists public.friends cascade;
 drop table if exists public.profiles cascade;
 
 -- Profiles table linked to Supabase Auth
+-- NOTE: email is intentionally NOT stored here. The profiles select policy is
+-- world-readable (for Discord-style profile lookups), so any column here is
+-- public. Email lives only in auth.users; the client reads it from the signed-in
+-- session, never from this table.
 create table public.profiles (
   id uuid references auth.users on delete cascade primary key,
   display_name text,
   avatar_url text,
-  email text,
   created_at timestamptz default now()
 );
 
@@ -54,7 +57,10 @@ create table public.group_invites (
   code text primary key,
   group_id uuid references public.groups(id) on delete cascade not null,
   created_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- One invite code per group: getOrCreateGroupInvite() reuses the existing
+  -- code, and this guards against a check-then-insert race creating duplicates.
+  unique (group_id)
 );
 
 -- Revised Runs table (linked to profiles)
@@ -74,24 +80,32 @@ create index runs_run_date_idx on public.runs(run_date desc);
 
 -- Helper functions for RLS to avoid circular recursion
 create or replace function public.is_group_member(group_uuid uuid, user_uuid uuid)
-returns boolean security definer as $$
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
 begin
   return exists (
     select 1 from public.group_members
     where group_id = group_uuid and user_id = user_uuid
   );
 end;
-$$ language plpgsql;
+$$;
 
 create or replace function public.is_group_owner(group_uuid uuid, user_uuid uuid)
-returns boolean security definer as $$
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
 begin
   return exists (
     select 1 from public.group_members
     where group_id = group_uuid and user_id = user_uuid and role = 'owner'
   );
 end;
-$$ language plpgsql;
+$$;
 
 -- ============================================================================
 -- Row Level Security (RLS) Policies
@@ -103,8 +117,11 @@ alter table public.group_members enable row level security;
 alter table public.group_invites enable row level security;
 alter table public.runs enable row level security;
 
--- Profiles: viewable by anyone, updatable by owner
+-- Profiles: viewable by anyone, insertable/updatable only by the owner.
+-- The insert policy lets the app self-heal a missing profile (the client
+-- fallback in app.js) when the on_auth_user_created trigger didn't fire.
 create policy "View profiles" on public.profiles for select using (true);
+create policy "Create own profile" on public.profiles for insert with check (auth.uid() = id);
 create policy "Update profile" on public.profiles for update using (auth.uid() = id);
 
 -- Friends: viewable, insertable, updatable, and deletable by the two involved users
@@ -162,18 +179,21 @@ create policy "Delete own runs" on public.runs for delete using (auth.uid() = us
 
 -- Auto-create profile from Google Auth signup data
 create or replace function public.handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
 begin
-  insert into public.profiles (id, display_name, avatar_url, email)
+  insert into public.profiles (id, display_name, avatar_url)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name', 'Runner'),
-    coalesce(new.raw_user_meta_data->>'avatar_url', new.raw_user_meta_data->>'picture'),
-    new.email
+    coalesce(new.raw_user_meta_data->>'avatar_url', new.raw_user_meta_data->>'picture')
   );
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 create or replace trigger on_auth_user_created
   after insert on auth.users
@@ -183,11 +203,10 @@ create or replace trigger on_auth_user_created
 alter publication supabase_realtime add table public.runs;
 
 -- Backfill any existing auth users into the profiles table
-insert into public.profiles (id, display_name, avatar_url, email)
-select 
-  id, 
+insert into public.profiles (id, display_name, avatar_url)
+select
+  id,
   coalesce(raw_user_meta_data->>'full_name', raw_user_meta_data->>'name', 'Runner'),
-  coalesce(raw_user_meta_data->>'avatar_url', raw_user_meta_data->>'picture'),
-  email
+  coalesce(raw_user_meta_data->>'avatar_url', raw_user_meta_data->>'picture')
 from auth.users
 on conflict (id) do nothing;
