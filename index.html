@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./index.css?v=8">
+  <link rel="stylesheet" href="./index.css?v=9">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icons/runorlose.png?v=1">
 </head>
@@ -41,14 +41,14 @@
     <div class="gate-card">
       <img src="./icons/runorlose.png" alt="Runaway logo" class="gate-logo">
       <h1>Runaway</h1>
-      <p class="gate-sub">A real-time group run tracker. Sign in to start tracking runs, joining groups, and logging with friends.</p>
-      
+      <p class="gate-sub">A real-time run tracker. Sign in to start tracking and logging runs with your friends.</p>
+
       <p id="gate-error" class="gate-error" role="alert" hidden></p>
       <button id="btn-login-google" class="btn-google">
         <img src="https://authjs.dev/img/providers/google.svg" alt="Google Logo" width="18" height="18">
         <span>Sign in with Google</span>
       </button>
-      
+
       <p class="gate-hint">Secure authentication provided by Supabase.</p>
     </div>
   </div>
@@ -77,26 +77,12 @@
     <!-- Navigation Tabs -->
     <nav class="app-nav">
       <button class="nav-btn active" data-tab="runs">Runs</button>
-      <button class="nav-btn" data-tab="friends">Friends</button>
-      <button class="nav-btn" data-tab="groups">Groups</button>
+      <button class="nav-btn" data-tab="friends">Friends<span id="friends-badge" class="nav-badge" hidden></span></button>
     </nav>
 
     <!-- ===================== Panel: Runs ===================== -->
     <div id="panel-runs" class="tab-panel">
-      <!-- Active View Filter -->
-      <div class="view-filter-card">
-        <label class="view-filter-label">
-          <span>Viewing:</span>
-          <select id="feed-filter" class="filter-select">
-            <option value="friends">All</option>
-          </select>
-        </label>
-      </div>
-
-      <!-- Totals strip -->
-      <section id="summary" class="summary" aria-label="Totals"></section>
-
-      <div class="grid-2" style="margin-top: 16px;">
+      <div class="grid-2">
         <!-- Leaderboard -->
         <section class="card">
           <div class="card-head">
@@ -131,108 +117,53 @@
 
     <!-- ===================== Panel: Friends ===================== -->
     <div id="panel-friends" class="tab-panel" hidden>
-      <div class="grid-2">
-        <!-- Add Friend -->
-        <section class="card">
-          <h2>Add Friends</h2>
-          <div class="friend-share">
-            <p class="section-desc">Share your Friend Link to let others add you:</p>
-            <div class="copy-box">
-              <input id="my-friend-link" readonly type="text" value="Loading...">
-              <button id="btn-copy-friend-link" class="btn btn-primary btn-sm">Copy Link</button>
-            </div>
-            <p id="my-uid-hint" class="uid-hint">User ID: <code id="my-uid">...</code></p>
-          </div>
-          
-          <div class="friend-add-manual" style="margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px;">
-            <p class="section-desc">Or search directly using a friend's User ID:</p>
-            <form id="friend-add-form" class="run-form">
-              <label class="field field-wide">
-                <span>Friend's User ID</span>
-                <input id="f-friend-id" type="text" required maxlength="50">
-              </label>
-              <div class="form-actions">
-                <button type="submit" class="btn btn-primary">Send Friend Request</button>
-                <span id="friend-add-msg" class="run-msg"></span>
-              </div>
-            </form>
-          </div>
-        </section>
-
-        <!-- Friend Requests -->
-        <section class="card">
-          <h2>Friend Requests</h2>
-          <div class="requests-container">
-            <h3>Incoming Requests</h3>
-            <ul id="incoming-requests-list" class="run-list"></ul>
-            
-            <h3 style="margin-top: 20px;">Outgoing Requests</h3>
-            <ul id="outgoing-requests-list" class="run-list"></ul>
-          </div>
-        </section>
-      </div>
-
-      <!-- Friends List -->
-      <section class="card" style="margin-top: 16px;">
+      <!-- Friends List (top) -->
+      <section class="card">
         <h2>Your Friends</h2>
         <ul id="friends-list" class="run-list"></ul>
       </section>
-    </div>
 
-    <!-- ===================== Panel: Groups ===================== -->
-    <div id="panel-groups" class="tab-panel" hidden>
-      <div class="grid-2">
-        <!-- Create Group -->
-        <section class="card">
-          <h2>Create a Group</h2>
-          <form id="group-create-form" class="run-form">
+      <!-- Friend Requests — whole card hidden unless there's a request -->
+      <section id="friend-requests-card" class="card" style="margin-top: 16px;" hidden>
+        <h2>Friend Requests</h2>
+        <div class="requests-container">
+          <div id="incoming-requests-block">
+            <h3>Incoming Requests</h3>
+            <ul id="incoming-requests-list" class="run-list"></ul>
+          </div>
+          <div id="outgoing-requests-block">
+            <h3 style="margin-top: 20px;">Outgoing Requests</h3>
+            <ul id="outgoing-requests-list" class="run-list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Add Friend -->
+      <section class="card" style="margin-top: 16px;">
+        <h2>Add Friends</h2>
+        <div class="friend-share">
+          <p class="section-desc">Share your Friend Link to let others add you:</p>
+          <div class="copy-box">
+            <input id="my-friend-link" readonly type="text" value="Loading...">
+            <button id="btn-copy-friend-link" class="btn btn-primary btn-sm">Copy Link</button>
+          </div>
+          <p id="my-uid-hint" class="uid-hint">Friend Code: <code id="my-uid">...</code></p>
+        </div>
+
+        <div class="friend-add-manual" style="margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px;">
+          <p class="section-desc">Or add a friend using their Friend Code:</p>
+          <form id="friend-add-form" class="run-form">
             <label class="field field-wide">
-              <span>Group Name</span>
-              <input id="f-group-name" type="text" required maxlength="50">
+              <span>Friend's Code</span>
+              <input id="f-friend-id" type="text" required maxlength="50" placeholder="e.g. AB12CD">
             </label>
             <div class="form-actions">
-              <button type="submit" class="btn btn-primary">Create Group</button>
-              <span id="group-create-msg" class="run-msg"></span>
+              <button type="submit" class="btn btn-primary">Send Friend Request</button>
+              <span id="friend-add-msg" class="run-msg"></span>
             </div>
           </form>
-        </section>
-
-        <!-- Join Group -->
-        <section class="card">
-          <h2>Join a Group</h2>
-          <form id="group-join-form" class="run-form">
-            <label class="field field-wide">
-              <span>Invite Code</span>
-              <input id="f-invite-code" type="text" required maxlength="10">
-            </label>
-            <div class="form-actions">
-              <button type="submit" class="btn btn-primary">Join Group</button>
-              <span id="group-join-msg" class="run-msg"></span>
-            </div>
-          </form>
-        </section>
-      </div>
-
-      <!-- Groups & Members Grid -->
-      <div class="grid-2" style="margin-top: 16px;">
-        <section class="card">
-          <h2>Your Groups</h2>
-          <ul id="groups-list" class="run-list"></ul>
-        </section>
-
-        <section id="group-manage-card" class="card" hidden>
-          <div class="card-head">
-            <h2 id="manage-group-name">Manage Group</h2>
-            <button id="btn-get-group-invite" class="btn btn-primary btn-sm">Generate Invite Link</button>
-          </div>
-          <div id="group-invite-display" class="copy-box" hidden>
-            <input id="group-invite-link" readonly type="text">
-            <button id="btn-copy-group-invite" class="btn btn-ghost btn-sm">Copy</button>
-          </div>
-          <h3 style="margin-top: 15px; margin-bottom: 8px;">Members</h3>
-          <ul id="group-members-list" class="run-list"></ul>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
 
     <!-- ===================== Panel: Profile ===================== -->
@@ -250,14 +181,14 @@
                 </div>
               </div>
               <input id="f-avatar-file" type="file" accept="image/*" style="display: none;">
-              <span class="import-hint">Click the picture to upload a custom image.</span>
+              <span class="import-hint">Click the picture to upload &amp; position a custom image.</span>
             </div>
-            
+
             <label class="field field-wide">
               <span>Display Name</span>
               <input id="f-display-name" type="text" required maxlength="50">
             </label>
-            
+
             <div class="form-actions">
               <button type="submit" class="btn btn-primary">Save Profile</button>
               <span id="profile-msg" class="run-msg" aria-live="polite"></span>
@@ -327,7 +258,7 @@
     </div>
   </div>
 
-  <!-- ===================== Invite Modal Overlay ===================== -->
+  <!-- ===================== Invite Modal Overlay (friend links) ===================== -->
   <div id="invite-modal" class="modal" hidden>
     <div class="modal-card">
       <h2 id="invite-title">Invitation</h2>
@@ -340,6 +271,26 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=7"></script>
+  <!-- ===================== Avatar Crop Modal ===================== -->
+  <div id="avatar-crop-modal" class="modal" hidden>
+    <div class="modal-card" style="max-width: 360px;">
+      <h2>Adjust your photo</h2>
+      <p class="section-desc">Drag to reposition · use the slider to zoom.</p>
+      <div class="cropper">
+        <canvas id="crop-canvas" class="crop-canvas" width="280" height="280"></canvas>
+        <div class="crop-ring"></div>
+      </div>
+      <label class="crop-zoom">
+        <span>Zoom</span>
+        <input id="crop-zoom" type="range" min="1" max="3" step="0.01" value="1">
+      </label>
+      <div class="modal-actions">
+        <button id="btn-crop-save" class="btn btn-primary btn-block">Use photo</button>
+        <button id="btn-crop-cancel" class="btn btn-ghost btn-block">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js?v=9"></script>
 </body>
 </html>

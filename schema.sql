@@ -3,7 +3,9 @@
 --  Paste this entire file into the Supabase SQL Editor.
 -- ============================================================================
 
--- Drop old tables if rebuilding
+-- Drop old tables if rebuilding. The group_* tables are dropped (not recreated)
+-- because the group feature has been removed — this cleans them out of any
+-- earlier install.
 drop table if exists public.runs cascade;
 drop table if exists public.group_invites cascade;
 drop table if exists public.group_members cascade;
@@ -11,15 +13,50 @@ drop table if exists public.groups cascade;
 drop table if exists public.friends cascade;
 drop table if exists public.profiles cascade;
 
+-- Drop now-removed group helper/RPC functions from earlier installs.
+drop function if exists public.is_group_member(uuid, uuid) cascade;
+drop function if exists public.is_group_owner(uuid, uuid) cascade;
+drop function if exists public.get_invite(text) cascade;
+drop function if exists public.join_group_by_code(text) cascade;
+
+-- Generate a short, unique, human-shareable friend code (e.g. "AB12CD").
+-- Used as the profiles.friend_code default so EVERY profile gets one — whether
+-- created by the signup trigger, the app's self-heal insert, or the backfill
+-- below. Alphabet omits ambiguous chars (0/O, 1/I) so codes are easy to read
+-- aloud and retype. SECURITY DEFINER so the uniqueness check can see all rows
+-- even under RLS. Defined before profiles so the column default can reference it
+-- (plpgsql defers the table lookup, so the not-yet-created table is fine here).
+create or replace function public.gen_friend_code()
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  alphabet text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  code text;
+  i int;
+begin
+  loop
+    code := '';
+    for i in 1..6 loop
+      code := code || substr(alphabet, 1 + floor(random() * length(alphabet))::int, 1);
+    end loop;
+    exit when not exists (select 1 from public.profiles where friend_code = code);
+  end loop;
+  return code;
+end;
+$$;
+
 -- Profiles table linked to Supabase Auth
--- NOTE: email is intentionally NOT stored here. The profiles select policy is
--- world-readable (for Discord-style profile lookups), so any column here is
--- public. Email lives only in auth.users; the client reads it from the signed-in
--- session, never from this table.
+-- NOTE: email is intentionally NOT stored here. Any column here is visible to
+-- every signed-in user (for Discord-style profile lookups). Email lives only in
+-- auth.users; the client reads it from the signed-in session, never from here.
 create table public.profiles (
   id uuid references auth.users on delete cascade primary key,
   display_name text,
   avatar_url text,
+  friend_code text unique default public.gen_friend_code(),
   created_at timestamptz default now()
 );
 
@@ -34,36 +71,7 @@ create table public.friends (
   constraint no_self_friend check (user_id <> friend_id)
 );
 
--- Groups table
-create table public.groups (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  created_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz default now()
-);
-
--- Group members table
-create table public.group_members (
-  id uuid primary key default gen_random_uuid(),
-  group_id uuid references public.groups(id) on delete cascade not null,
-  user_id uuid references public.profiles(id) on delete cascade not null,
-  role text not null check (role in ('owner', 'member')) default 'member',
-  joined_at timestamptz default now(),
-  unique (group_id, user_id)
-);
-
--- Discord-style invitation codes
-create table public.group_invites (
-  code text primary key,
-  group_id uuid references public.groups(id) on delete cascade not null,
-  created_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz default now(),
-  -- One invite code per group: getOrCreateGroupInvite() reuses the existing
-  -- code, and this guards against a check-then-insert race creating duplicates.
-  unique (group_id)
-);
-
--- Revised Runs table (linked to profiles)
+-- Runs table (linked to profiles)
 create table public.runs (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid references public.profiles(id) on delete cascade not null,
@@ -78,100 +86,19 @@ create table public.runs (
 create index runs_user_date_idx on public.runs(user_id, run_date desc);
 create index runs_run_date_idx on public.runs(run_date desc);
 
--- Helper functions for RLS to avoid circular recursion
-create or replace function public.is_group_member(group_uuid uuid, user_uuid uuid)
-returns boolean
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  return exists (
-    select 1 from public.group_members
-    where group_id = group_uuid and user_id = user_uuid
-  );
-end;
-$$;
-
-create or replace function public.is_group_owner(group_uuid uuid, user_uuid uuid)
-returns boolean
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  return exists (
-    select 1 from public.group_members
-    where group_id = group_uuid and user_id = user_uuid and role = 'owner'
-  );
-end;
-$$;
-
--- Preview a group invite by its code without exposing the whole invites table.
--- Runs as definer so a prospective member (not yet in the group) can read just
--- the one group's name for the confirmation modal.
-create or replace function public.get_invite(invite_code text)
-returns table (group_id uuid, group_name text)
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  return query
-  select g.id, g.name
-  from public.group_invites gi
-  join public.groups g on g.id = gi.group_id
-  where gi.code = invite_code;
-end;
-$$;
-
--- Join a group using a valid invite code. SECURITY DEFINER so membership can
--- only ever be created against a real code — never by guessing a group UUID.
-create or replace function public.join_group_by_code(invite_code text)
-returns table (group_id uuid, group_name text)
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_group_id uuid;
-  v_group_name text;
-begin
-  if auth.uid() is null then
-    raise exception 'Not authenticated';
-  end if;
-
-  select g.id, g.name into v_group_id, v_group_name
-  from public.group_invites gi
-  join public.groups g on g.id = gi.group_id
-  where gi.code = invite_code;
-
-  if v_group_id is null then
-    raise exception 'Invalid invite code';
-  end if;
-
-  insert into public.group_members (group_id, user_id, role)
-  values (v_group_id, auth.uid(), 'member')
-  on conflict (group_id, user_id) do nothing;
-
-  return query select v_group_id, v_group_name;
-end;
-$$;
-
 -- ============================================================================
 -- Row Level Security (RLS) Policies
 -- ============================================================================
 alter table public.profiles enable row level security;
 alter table public.friends enable row level security;
-alter table public.groups enable row level security;
-alter table public.group_members enable row level security;
-alter table public.group_invites enable row level security;
 alter table public.runs enable row level security;
 
--- Profiles: viewable by anyone, insertable/updatable only by the owner.
--- The insert policy lets the app self-heal a missing profile (the client
--- fallback in app.js) when the on_auth_user_created trigger didn't fire.
-create policy "View profiles" on public.profiles for select using (true);
+-- Profiles: readable by any SIGNED-IN user (needed for friend-code lookups and
+-- Discord-style profile previews), but NOT by anonymous callers holding the
+-- public anon key — that blocks scraping the whole user list. Insert/update
+-- limited to the owner. The insert policy lets the app self-heal a missing
+-- profile (the client fallback in app.js) when the signup trigger didn't fire.
+create policy "View profiles" on public.profiles for select using (auth.role() = 'authenticated');
 create policy "Create own profile" on public.profiles for insert with check (auth.uid() = id);
 create policy "Update profile" on public.profiles for update using (auth.uid() = id);
 
@@ -183,53 +110,15 @@ create policy "Accept friendship request" on public.friends for update
   with check (auth.uid() = user_id or auth.uid() = friend_id);
 create policy "Remove friendship" on public.friends for delete using (auth.uid() = user_id or auth.uid() = friend_id);
 
--- Groups & Members
-create policy "View groups in memberships" on public.groups for select using (
-  auth.uid() = created_by or public.is_group_member(id, auth.uid())
-);
-create policy "Create group" on public.groups for insert with check (auth.uid() = created_by);
-create policy "Update group details" on public.groups for update
-  using (public.is_group_owner(id, auth.uid()))
-  with check (public.is_group_owner(id, auth.uid()));
-
-create policy "View group memberships" on public.group_members for select using (
-  public.is_group_member(group_id, auth.uid())
-);
--- Direct self-insert is limited to the group's creator (the owner row created in
--- createGroup()). Everyone else joins through join_group_by_code() below, which
--- runs as SECURITY DEFINER and only inserts against a valid invite code — so a
--- user can never add themselves to a group by guessing its UUID.
-create policy "Join group" on public.group_members for insert with check (
-  auth.uid() = user_id
-  and exists (select 1 from public.groups g where g.id = group_id and g.created_by = auth.uid())
-);
-create policy "Leave or kick group member" on public.group_members for delete using (
-  auth.uid() = user_id or public.is_group_owner(group_id, auth.uid())
-);
-
--- Invites: only members can read their group's code (to share it); insert by members.
--- Non-members preview/join a code through get_invite()/join_group_by_code() instead.
-create policy "Read group invites" on public.group_invites for select using (
-  public.is_group_member(group_id, auth.uid())
-);
-create policy "Create group invites" on public.group_invites for insert with check (
-  public.is_group_member(group_id, auth.uid())
-);
-
--- Runs: visible to self, accepted friends, or group co-members
+-- Runs: visible to self or accepted friends
 create policy "View runs" on public.runs for select using (
   user_id = auth.uid() or
   exists (
-    select 1 from public.friends f 
+    select 1 from public.friends f
     where f.status = 'accepted' and (
       (f.user_id = auth.uid() and f.friend_id = runs.user_id) or
       (f.friend_id = auth.uid() and f.user_id = runs.user_id)
     )
-  ) or
-  exists (
-    select 1 from public.group_members m1
-    join public.group_members m2 on m1.group_id = m2.group_id
-    where m1.user_id = auth.uid() and m2.user_id = runs.user_id
   )
 );
 create policy "Insert own runs" on public.runs for insert with check (auth.uid() = user_id);
@@ -262,17 +151,30 @@ create or replace trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
--- Enable realtime broadcasts for runs
+-- Enable realtime broadcasts. runs powers the live feed/leaderboard; friends
+-- powers live friend-request arrival and the tab notification badge. Both tables
+-- were dropped above, which also removed them from the publication, so these
+-- adds are safe to re-run.
 alter publication supabase_realtime add table public.runs;
+alter publication supabase_realtime add table public.friends;
 
--- Backfill any existing auth users into the profiles table
-insert into public.profiles (id, display_name, avatar_url)
-select
-  id,
-  coalesce(raw_user_meta_data->>'full_name', raw_user_meta_data->>'name', 'Runner'),
-  coalesce(raw_user_meta_data->>'avatar_url', raw_user_meta_data->>'picture')
-from auth.users
-on conflict (id) do nothing;
+-- Backfill any existing auth users into the profiles table.
+-- Done row-by-row (not a single INSERT...SELECT) so each row's friend_code
+-- default runs as its own statement and can see the codes assigned to earlier
+-- rows — guaranteeing uniqueness across the backfilled set.
+do $$
+declare u record;
+begin
+  for u in select id, raw_user_meta_data from auth.users loop
+    insert into public.profiles (id, display_name, avatar_url)
+    values (
+      u.id,
+      coalesce(u.raw_user_meta_data->>'full_name', u.raw_user_meta_data->>'name', 'Runner'),
+      coalesce(u.raw_user_meta_data->>'avatar_url', u.raw_user_meta_data->>'picture')
+    )
+    on conflict (id) do nothing;
+  end loop;
+end $$;
 
 -- ============================================================================
 -- Storage: avatars bucket (custom profile picture uploads)
@@ -291,7 +193,7 @@ drop policy if exists "Users can update their own avatar" on storage.objects;
 drop policy if exists "Users can delete their own avatar" on storage.objects;
 
 -- Public read; write limited to the uploader's own folder. uploadAvatar() stores
--- files at "<uid>/<timestamp>.<ext>", so the first path segment is the owner id.
+-- files at "<uid>/<timestamp>.webp", so the first path segment is the owner id.
 create policy "Avatar images are publicly readable"
   on storage.objects for select
   using (bucket_id = 'avatars');

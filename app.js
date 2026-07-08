@@ -1,7 +1,7 @@
 // ============================================================================
 //  Runaway — App logic
-//  Handles login/logout, navigation tabs, theme toggling, friend system,
-//  group invitations, floating log modals, and zero-sum Baht calculations.
+//  Handles login/logout, navigation tabs, theme toggling, the friend system,
+//  floating log modals, the avatar cropper, and zero-sum Baht calculations.
 // ============================================================================
 
 import {
@@ -15,21 +15,17 @@ import {
   addRun,
   deleteRun,
   subscribeToRuns,
+  subscribeToFriends,
   fetchProfile,
   fetchFriends,
   fetchPendingRequests,
   sendFriendRequest,
+  getFriendByCode,
   acceptFriendRequest,
   removeFriendship,
-  fetchGroups,
-  createGroup,
-  fetchGroupMembers,
-  getOrCreateGroupInvite,
-  fetchInvite,
-  joinGroupByCode,
   updateProfile,
   uploadAvatar,
-} from './db.js';
+} from './db.js?v=3';
 import { parseActivityFile } from './parse.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -38,18 +34,18 @@ const $ = (sel) => document.querySelector(sel);
 let me = null;                  // current logged-in user profile
 let runs = [];                  // runs cache
 let poolRoster = [];            // everyone eligible for the Run-or-Lose pool
-                                // (friends+me, or the active group's members),
-                                // so non-runners are counted at 0 km.
+                                // (friends + me), so non-runners are counted at
+                                // 0 km.
 let range = 'week';             // week | month | all
 let onlyMine = false;
-let unsubscribe = null;
-let activeGroupId = null;       // null (friends/default) or group UUID
-let activeTab = 'runs';         // runs | friends | groups
-let activeManageGroupId = null; // currently selected group ID for members view
-let pendingAction = null;       // friend link or group invite action
+let unsubscribe = null;         // runs realtime teardown
+let unsubscribeFriends = null;  // friends realtime teardown
+let activeTab = 'runs';         // runs | friends | profile
+let pendingAction = null;       // friend link action from a URL
 let pendingSharedFile = null;   // watch activity files from Android share sheet
 let sharedHandled = false;
 let authResolved = false;       // has Supabase emitted its first auth event yet?
+let pendingAvatarBlob = null;   // cropped avatar awaiting profile save
 
 // ---------------------------------------------------------------------------
 //  Startup
@@ -58,7 +54,7 @@ init();
 
 function init() {
   registerServiceWorker();
-  
+
   // Initialize Draggable Theme Switch
   initThemeSwitch();
 
@@ -74,7 +70,7 @@ function init() {
     return;
   }
 
-  // 1. Check URL query parameters for invites first
+  // 1. Check URL query parameters for friend links first
   checkUrlParams();
 
   // 2. Auth state change listener
@@ -152,42 +148,25 @@ function init() {
     });
   });
 
-  // Group filter select
-  $('#feed-filter').addEventListener('change', (e) => {
-    const val = e.target.value;
-    activeGroupId = val === 'friends' ? null : val;
-    loadRuns();
-  });
-
   // Friend actions
   $('#friend-add-form').addEventListener('submit', onFriendAddSubmit);
   $('#btn-copy-friend-link').addEventListener('click', copyFriendLink);
 
-  // Group actions
-  $('#group-create-form').addEventListener('submit', onGroupCreateSubmit);
-  $('#group-join-form').addEventListener('submit', onGroupJoinSubmit);
-  $('#btn-get-group-invite').addEventListener('click', onGenerateGroupInviteClick);
-  $('#btn-copy-group-invite').addEventListener('click', copyGroupInviteLink);
-
-  // Invite modal actions
+  // Invite modal actions (friend links)
   $('#btn-invite-accept').addEventListener('click', acceptPendingAction);
   $('#btn-invite-decline').addEventListener('click', closeInviteModal);
 
   // Profile navigation triggers
   $('.user-profile').addEventListener('click', () => switchTab('profile'));
 
-  // Profile page actions
+  // Profile page actions — picking a file opens the cropper rather than
+  // uploading the raw image directly.
   $('.avatar-edit-container').addEventListener('click', () => $('#f-avatar-file').click());
-  $('#f-avatar-file').addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      $('#profile-edit-avatar').src = event.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
+  $('#f-avatar-file').addEventListener('change', onAvatarFilePicked);
   $('#profile-form').addEventListener('submit', onProfileSubmit);
+
+  // Avatar cropper controls
+  initAvatarCropper();
 }
 
 // ---------------------------------------------------------------------------
@@ -322,21 +301,21 @@ function initThemeSwitch() {
 }
 
 // ---------------------------------------------------------------------------
-//  URL Query Parameters (Friend links and Group invites)
+//  URL Query Parameters (Friend links)
 // ---------------------------------------------------------------------------
 function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
-  const addFriend = params.get('add-friend');
-  const invite = params.get('invite');
+  const friendCode = params.get('f');          // new short link: ?f=AB12CD
+  const addFriend = params.get('add-friend');   // legacy link: ?add-friend=<uuid>
 
-  if (addFriend) {
+  if (friendCode) {
+    pendingAction = { type: 'friend', code: friendCode };
+  } else if (addFriend) {
     pendingAction = { type: 'friend', id: addFriend };
-  } else if (invite) {
-    pendingAction = { type: 'group', code: invite };
   }
 
   // Clear query parameters from address bar to keep things tidy
-  if (addFriend || invite) {
+  if (friendCode || addFriend) {
     window.history.replaceState({}, document.title, window.location.pathname);
   }
 }
@@ -353,21 +332,23 @@ async function handlePendingAction() {
   modal.hidden = false;
 
   try {
-    if (pendingAction.type === 'friend') {
-      title.textContent = 'Add Friend';
-      desc.textContent = 'Loading friend profile...';
-      const profile = await fetchProfile(pendingAction.id);
-      
-      if (profile.id === me.id) {
-        throw new Error("You cannot add yourself as a friend!");
-      }
-      desc.textContent = `Would you like to send a friend request to "${profile.display_name}"?`;
-    } else if (pendingAction.type === 'group') {
-      title.textContent = 'Join Group';
-      desc.textContent = 'Loading invitation details...';
-      const invite = await fetchInvite(pendingAction.code);
-      desc.textContent = `Would you like to join the group "${invite.groups.name}"?`;
+    title.textContent = 'Add Friend';
+    desc.textContent = 'Loading friend profile...';
+    // New links carry a short code; legacy links carry the raw UUID.
+    const profile = pendingAction.code
+      ? await getFriendByCode(pendingAction.code)
+      : await fetchProfile(pendingAction.id);
+
+    if (!profile) {
+      throw new Error('That friend link is invalid or has expired.');
     }
+    if (profile.id === me.id) {
+      throw new Error("You cannot add yourself as a friend!");
+    }
+    // Normalize to the UUID so acceptPendingAction() can reuse the existing
+    // UUID-validated sendFriendRequest() path.
+    pendingAction.id = profile.id;
+    desc.textContent = `Would you like to send a friend request to "${profile.display_name}"?`;
   } catch (e) {
     desc.textContent = 'Oops! Something went wrong.';
     err.textContent = e.message;
@@ -383,20 +364,13 @@ async function acceptPendingAction() {
   err.hidden = true;
 
   try {
-    if (pendingAction.type === 'friend') {
-      const res = await sendFriendRequest(pendingAction.id);
-      if (res.status === 'accepted') {
-        alert('Friend request accepted! You are now friends.');
-      } else {
-        alert('Friend request sent!');
-      }
-      loadFriends();
-    } else if (pendingAction.type === 'group') {
-      const group = await joinGroupByCode(pendingAction.code);
-      alert(`Successfully joined group "${group.name}"!`);
-      loadGroups();
-      loadRuns();
+    const res = await sendFriendRequest(pendingAction.id);
+    if (res.status === 'accepted') {
+      alert('Friend request accepted! You are now friends.');
+    } else {
+      alert('Friend request sent!');
     }
+    loadFriends();
     closeInviteModal();
   } catch (e) {
     err.textContent = e.message;
@@ -419,7 +393,7 @@ async function enterApp() {
   hideBoot();
   $('#gate').style.display = 'none';
   $('#app').hidden = false;
-  
+
   // Set up profile displays
   $('#who-name').textContent = me.display_name;
   if (me.avatar_url) {
@@ -428,10 +402,13 @@ async function enterApp() {
     avatar.hidden = false;
   }
 
-  // Display user's own shareable friend link
-  const link = window.location.origin + window.location.pathname + '?add-friend=' + me.id;
+  // Display user's own shareable friend link. Prefer the short friend code
+  // (?f=AB12CD); fall back to the full UUID only if the code is somehow missing
+  // (e.g. a profile created before the friend_code column existed).
+  const shareId = me.friend_code || me.id;
+  const link = window.location.origin + window.location.pathname + '?f=' + shareId;
   $('#my-friend-link').value = link;
-  $('#my-uid').textContent = me.id;
+  $('#my-uid').textContent = me.friend_code || me.id;
 
   maybeImportShared();
 
@@ -439,7 +416,6 @@ async function enterApp() {
   await Promise.all([
     loadRuns(),
     loadFriends(),
-    loadGroups(),
   ]);
 
   // Handle URL requests if they exist
@@ -447,11 +423,16 @@ async function enterApp() {
     handlePendingAction();
   }
 
-  // Subscribe to changes on runs
+  // Subscribe to realtime changes. Runs drive the live feed; friend changes
+  // refresh the requests list, the tab badge, and the pool (a new friend's runs
+  // become visible).
   unsubscribe = subscribeToRuns(
     async () => { await loadRuns(); },
     (status) => setLive(status === 'SUBSCRIBED'),
   );
+  unsubscribeFriends = subscribeToFriends(async () => {
+    await Promise.all([loadFriends(), loadRuns()]);
+  });
 }
 
 function exitApp() {
@@ -463,6 +444,10 @@ function exitApp() {
   if (unsubscribe) {
     unsubscribe();
     unsubscribe = null;
+  }
+  if (unsubscribeFriends) {
+    unsubscribeFriends();
+    unsubscribeFriends = null;
   }
 }
 
@@ -480,7 +465,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.app-nav .nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tab === tabId);
   });
-  
+
   document.querySelectorAll('.tab-panel').forEach((panel) => {
     panel.hidden = panel.id !== `panel-${tabId}`;
   });
@@ -490,8 +475,6 @@ function switchTab(tabId) {
 
   if (tabId === 'friends') {
     loadFriends();
-  } else if (tabId === 'groups') {
-    loadGroups();
   } else if (tabId === 'runs') {
     loadRuns();
   } else if (tabId === 'profile') {
@@ -501,8 +484,10 @@ function switchTab(tabId) {
 
 async function loadProfileTab() {
   if (!me) return;
+  // A crop picked but not saved shouldn't linger into a fresh visit.
+  pendingAvatarBlob = null;
   $('#f-display-name').value = me.display_name || '';
-  
+
   const editAvatar = $('#profile-edit-avatar');
   editAvatar.src = me.avatar_url || 'https://authjs.dev/img/providers/google.svg';
 
@@ -512,7 +497,7 @@ async function loadProfileTab() {
     if (user) {
       $('#info-email').textContent = user.email || 'N/A';
       $('#info-uid').textContent = user.id || 'N/A';
-      
+
       const createdDate = new Date(user.created_at);
       $('#info-joined').textContent = createdDate.toLocaleDateString(undefined, {
         year: 'numeric',
@@ -529,7 +514,6 @@ async function onProfileSubmit(e) {
   e.preventDefault();
   const msg = $('#profile-msg');
   const nameField = $('#f-display-name');
-  const fileField = $('#f-avatar-file');
   const submitBtn = $('#profile-form button[type="submit"]');
 
   const displayName = nameField.value.trim();
@@ -545,10 +529,9 @@ async function onProfileSubmit(e) {
   try {
     let avatarUrl = me.avatar_url;
 
-    const file = fileField.files && fileField.files[0];
-    if (file) {
+    if (pendingAvatarBlob) {
       msg.textContent = 'Uploading avatar image...';
-      avatarUrl = await uploadAvatar(file, me.id);
+      avatarUrl = await uploadAvatar(pendingAvatarBlob, me.id);
     }
 
     msg.textContent = 'Updating profile details...';
@@ -558,7 +541,8 @@ async function onProfileSubmit(e) {
     });
 
     me = updatedProfile;
-    
+    pendingAvatarBlob = null;
+
     // Update header displays
     $('#who-name').textContent = me.display_name;
     if (me.avatar_url) {
@@ -569,7 +553,6 @@ async function onProfileSubmit(e) {
 
     msg.textContent = 'Profile saved successfully!';
     msg.style.color = '#22c55e'; // Green
-    fileField.value = ''; // Reset file input
 
     // Refresh leaderboards/runs lists in case the name changed
     loadRuns();
@@ -585,11 +568,158 @@ async function onProfileSubmit(e) {
 }
 
 // ---------------------------------------------------------------------------
+//  Avatar Cropper (pan + zoom → small square WebP)
+//  Lets the user reposition/zoom an oversized photo to fit the round avatar,
+//  and exports a capped-size WebP so Supabase storage stays lean.
+// ---------------------------------------------------------------------------
+const CROP_VIEW = 280;                    // on-screen crop viewport edge (px)
+const CROP_OUTPUT = 400;                   // exported image edge (px)
+const CROP_MAX_INPUT_BYTES = 15 * 1024 * 1024; // reject absurd source files early
+const crop = {
+  img: null, baseCover: 1, zoom: 1,
+  offsetX: 0, offsetY: 0,
+  dragging: false, lastX: 0, lastY: 0,
+};
+
+function initAvatarCropper() {
+  const canvas = $('#crop-canvas');
+  if (!canvas) return;
+  $('#crop-zoom').addEventListener('input', onCropZoom);
+  canvas.addEventListener('pointerdown', onCropDown);
+  canvas.addEventListener('pointermove', onCropMove);
+  canvas.addEventListener('pointerup', onCropUp);
+  canvas.addEventListener('pointercancel', onCropUp);
+  $('#btn-crop-save').addEventListener('click', saveCrop);
+  $('#btn-crop-cancel').addEventListener('click', () => {
+    $('#avatar-crop-modal').hidden = true;
+  });
+}
+
+function onAvatarFilePicked(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ''; // allow re-picking the same file later
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    alert('Please choose an image file.');
+    return;
+  }
+  if (file.size > CROP_MAX_INPUT_BYTES) {
+    alert('That image is too large. Please pick one under 15 MB.');
+    return;
+  }
+  openCropper(file);
+}
+
+function openCropper(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    crop.img = img;
+    // "Cover" scale so the image fully fills the square at zoom = 1.
+    crop.baseCover = Math.max(CROP_VIEW / img.width, CROP_VIEW / img.height);
+    crop.zoom = 1;
+    $('#crop-zoom').value = '1';
+    centerCrop();
+    drawCrop();
+    $('#avatar-crop-modal').hidden = false;
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    alert('Could not read that image. Try a different file.');
+  };
+  img.src = url;
+}
+
+function cropScale() { return crop.baseCover * crop.zoom; }
+function cropDrawW() { return crop.img.width * cropScale(); }
+function cropDrawH() { return crop.img.height * cropScale(); }
+
+// Keep the image covering the viewport on all sides (no empty gaps).
+function clampCrop() {
+  const minX = CROP_VIEW - cropDrawW();
+  const minY = CROP_VIEW - cropDrawH();
+  crop.offsetX = Math.min(0, Math.max(minX, crop.offsetX));
+  crop.offsetY = Math.min(0, Math.max(minY, crop.offsetY));
+}
+
+function centerCrop() {
+  crop.offsetX = (CROP_VIEW - cropDrawW()) / 2;
+  crop.offsetY = (CROP_VIEW - cropDrawH()) / 2;
+}
+
+function drawCrop() {
+  const canvas = $('#crop-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, CROP_VIEW, CROP_VIEW);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(crop.img, crop.offsetX, crop.offsetY, cropDrawW(), cropDrawH());
+}
+
+function onCropZoom(e) {
+  if (!crop.img) return;
+  const prevScale = cropScale();
+  const center = CROP_VIEW / 2;
+  // Image-space point currently under the viewport centre — keep it fixed.
+  const imgX = (center - crop.offsetX) / prevScale;
+  const imgY = (center - crop.offsetY) / prevScale;
+  crop.zoom = Number(e.target.value);
+  const newScale = cropScale();
+  crop.offsetX = center - imgX * newScale;
+  crop.offsetY = center - imgY * newScale;
+  clampCrop();
+  drawCrop();
+}
+
+function onCropDown(e) {
+  if (!crop.img) return;
+  crop.dragging = true;
+  crop.lastX = e.clientX;
+  crop.lastY = e.clientY;
+  if (e.target.setPointerCapture) e.target.setPointerCapture(e.pointerId);
+}
+
+function onCropMove(e) {
+  if (!crop.dragging) return;
+  crop.offsetX += e.clientX - crop.lastX;
+  crop.offsetY += e.clientY - crop.lastY;
+  crop.lastX = e.clientX;
+  crop.lastY = e.clientY;
+  clampCrop();
+  drawCrop();
+}
+
+function onCropUp() {
+  crop.dragging = false;
+}
+
+function saveCrop() {
+  if (!crop.img) return;
+  const factor = CROP_OUTPUT / CROP_VIEW;
+  const out = document.createElement('canvas');
+  out.width = CROP_OUTPUT;
+  out.height = CROP_OUTPUT;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(
+    crop.img,
+    crop.offsetX * factor, crop.offsetY * factor,
+    cropDrawW() * factor, cropDrawH() * factor,
+  );
+  out.toBlob((blob) => {
+    if (!blob) { alert('Could not process that image. Try another.'); return; }
+    pendingAvatarBlob = blob;
+    $('#profile-edit-avatar').src = URL.createObjectURL(blob);
+    $('#avatar-crop-modal').hidden = true;
+  }, 'image/webp', 0.85);
+}
+
+// ---------------------------------------------------------------------------
 //  Data Load Operations
 // ---------------------------------------------------------------------------
 async function loadRuns() {
   try {
-    runs = await fetchRuns(activeGroupId);
+    runs = await fetchRuns();
     poolRoster = await buildPoolRoster();
     setLive(true);
     renderAll();
@@ -599,20 +729,11 @@ async function loadRuns() {
   }
 }
 
-// The set of people who should be in the Run-or-Lose pool for the current view.
-// In a group view that's every group member; otherwise it's me plus my accepted
+// The set of people who should be in the Run-or-Lose pool: me plus my accepted
 // friends. Anyone here who hasn't logged a run counts as 0 km — that's the point
 // of the challenge. Returns [{ userId, name, avatar }].
 async function buildPoolRoster() {
   try {
-    if (activeGroupId) {
-      const members = await fetchGroupMembers(activeGroupId);
-      return members.map((m) => ({
-        userId: m.id,
-        name: m.display_name || 'Anonymous',
-        avatar: m.avatar_url || '',
-      }));
-    }
     const friends = await fetchFriends();
     const roster = [{
       userId: me.id,
@@ -640,40 +761,15 @@ async function loadFriends() {
     const list = await fetchFriends();
     const { incoming, outgoing } = await fetchPendingRequests();
     renderFriendsView(list, incoming, outgoing);
+    updateFriendBadge(incoming.length);
   } catch (err) {
     console.error('Error loading friends:', err);
   }
 }
 
-async function loadGroups() {
-  try {
-    const list = await fetchGroups();
-    renderGroupsView(list);
-  } catch (err) {
-    console.error('Error loading groups:', err);
-  }
-}
-
 function renderAll() {
-  renderSummary();
   renderLeaderboard();
   renderRuns();
-}
-
-// ---------------------------------------------------------------------------
-//  Summary Panel rendering
-// ---------------------------------------------------------------------------
-function renderSummary() {
-  const myKm = sum(runs.filter((r) => r.user_id === me.id).map((r) => Number(r.distance_km)));
-
-  const cards = [
-    { label: 'Runs logged', value: String(runs.length) },
-    { label: 'Your distance', value: fmtKm(myKm) },
-  ];
-  
-  $('#summary').innerHTML = cards
-    .map((c) => `<div class="stat"><div class="stat-value">${c.value}</div><div class="stat-label">${c.label}</div></div>`)
-    .join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -705,7 +801,7 @@ function renderLeaderboard() {
     if (bahtList) bahtList.innerHTML = `<li class="empty">No runs logged yet.</li>`;
     return;
   }
-  
+
   el.innerHTML = ranked
     .map((row, i) => `
       <li class="lb-row${row.userId === me.id ? ' is-me' : ''}">
@@ -723,6 +819,10 @@ function renderLeaderboard() {
   renderBahtChallenge(ranked);
 }
 
+// Baht per km that a below-average runner owes into the pool. Named so the
+// scaling of the zero-sum payout is explicit rather than a magic literal.
+const BAHT_PER_KM = 10;
+
 function renderBahtChallenge(ranked) {
   const bahtList = $('#baht-challenge-list');
   if (!bahtList) return;
@@ -730,8 +830,8 @@ function renderBahtChallenge(ranked) {
   // Build the full pool: every eligible person (poolRoster) seeded at 0 km,
   // then overlaid with the km they actually logged in this range. Someone who
   // didn't run stays at 0 and takes the biggest loss — "Run or Lose". We also
-  // fold in any ranked runner not on the roster (e.g. a group co-member visible
-  // in the "All" feed) so the leaderboard and pool stay in sync.
+  // fold in any ranked runner not on the roster so leaderboard and pool stay in
+  // sync.
   const pool = new Map();
   for (const m of poolRoster) {
     pool.set(m.userId, { userId: m.userId, name: m.name, avatar: m.avatar, km: 0, runs: 0 });
@@ -755,7 +855,7 @@ function renderBahtChallenge(ranked) {
     return {
       ...row,
       diff,
-      loss: diff < 0 ? -diff * 10 : 0
+      loss: diff < 0 ? -diff * BAHT_PER_KM : 0
     };
   });
 
@@ -822,7 +922,7 @@ function renderBahtChallenge(ranked) {
 function renderRuns() {
   const list = onlyMine ? runs.filter((r) => r.user_id === me.id) : runs;
   const el = $('#run-list');
-  
+
   if (list.length === 0) {
     el.innerHTML = `<li class="empty">No runs logged yet.</li>`;
     return;
@@ -834,7 +934,7 @@ function renderRuns() {
       const isMine = r.user_id === me.id;
       const runnerName = r.profiles?.display_name || 'Anonymous';
       const avatar = r.profiles?.avatar_url || '';
-      
+
       return `
         <li class="run-item">
           <div class="run-main">
@@ -867,7 +967,7 @@ function renderFriendsView(friends, incoming, outgoing) {
   // Friends List
   const flist = $('#friends-list');
   if (friends.length === 0) {
-    flist.innerHTML = '<li class="empty">You have no friends added yet. Share your invite link above!</li>';
+    flist.innerHTML = '<li class="empty">You have no friends added yet. Share your invite link below!</li>';
   } else {
     flist.innerHTML = friends
       .map((f) => `
@@ -881,17 +981,21 @@ function renderFriendsView(friends, incoming, outgoing) {
           </div>
         </li>`)
       .join('');
-      
+
     flist.querySelectorAll('.remove-friend-btn').forEach((btn) => {
       btn.addEventListener('click', () => onRemoveFriendshipClick(btn.dataset.id, 'Remove friend?'));
     });
   }
 
-  // Incoming requests
-  const incList = $('#incoming-requests-list');
-  if (incoming.length === 0) {
-    incList.innerHTML = '<li class="empty">No incoming requests.</li>';
-  } else {
+  // Requests: each section only appears when it has items, and the whole card
+  // is hidden unless there's at least one request either way.
+  const incBlock = $('#incoming-requests-block');
+  const outBlock = $('#outgoing-requests-block');
+  const card = $('#friend-requests-card');
+
+  if (incoming.length > 0) {
+    incBlock.hidden = false;
+    const incList = $('#incoming-requests-list');
     incList.innerHTML = incoming
       .map((req) => `
         <li class="run-item">
@@ -905,20 +1009,20 @@ function renderFriendsView(friends, incoming, outgoing) {
           </div>
         </li>`)
       .join('');
-      
+
     incList.querySelectorAll('.accept-req-btn').forEach((btn) => {
       btn.addEventListener('click', () => onAcceptFriendRequestClick(btn.dataset.id));
     });
     incList.querySelectorAll('.decline-req-btn').forEach((btn) => {
       btn.addEventListener('click', () => onRemoveFriendshipClick(btn.dataset.id, 'Decline request?'));
     });
+  } else {
+    incBlock.hidden = true;
   }
 
-  // Outgoing requests
-  const outList = $('#outgoing-requests-list');
-  if (outgoing.length === 0) {
-    outList.innerHTML = '<li class="empty">No outgoing requests.</li>';
-  } else {
+  if (outgoing.length > 0) {
+    outBlock.hidden = false;
+    const outList = $('#outgoing-requests-list');
     outList.innerHTML = outgoing
       .map((req) => `
         <li class="run-item">
@@ -931,27 +1035,54 @@ function renderFriendsView(friends, incoming, outgoing) {
           </div>
         </li>`)
       .join('');
-      
+
     outList.querySelectorAll('.cancel-req-btn').forEach((btn) => {
       btn.addEventListener('click', () => onRemoveFriendshipClick(btn.dataset.id, 'Cancel friend request?'));
     });
+  } else {
+    outBlock.hidden = true;
+  }
+
+  card.hidden = incoming.length === 0 && outgoing.length === 0;
+}
+
+// Show/clear the incoming-request count badge on the Friends nav tab.
+function updateFriendBadge(count) {
+  const badge = $('#friends-badge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = String(count);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
   }
 }
+
+// A friend code is 6 characters (letters/digits); anything longer is treated as
+// a raw UUID and validated downstream by sendFriendRequest().
+const FRIEND_CODE_RE = /^[A-Za-z0-9]{6}$/;
 
 async function onFriendAddSubmit(e) {
   e.preventDefault();
   const field = $('#f-friend-id');
   const msg = $('#friend-add-msg');
-  const fid = field.value.trim();
+  const input = field.value.trim();
 
-  if (!fid) return;
-  if (fid === me.id) {
-    msg.textContent = 'You cannot add yourself!';
-    return;
-  }
+  if (!input) return;
 
   msg.textContent = 'Sending request...';
   try {
+    // Accept either a short friend code or a full User ID.
+    let fid = input;
+    if (FRIEND_CODE_RE.test(input)) {
+      const profile = await getFriendByCode(input);
+      if (!profile) throw new Error('No runner found with that code.');
+      fid = profile.id;
+    }
+    if (fid === me.id) {
+      msg.textContent = 'You cannot add yourself!';
+      return;
+    }
     const res = await sendFriendRequest(fid);
     if (res.status === 'accepted') {
       msg.textContent = 'You are now friends!';
@@ -989,158 +1120,14 @@ function copyFriendLink() {
   const linkEl = $('#my-friend-link');
   linkEl.select();
   linkEl.setSelectionRange(0, 99999);
-  navigator.clipboard.writeText(linkEl.value);
-  
+  try {
+    navigator.clipboard.writeText(linkEl.value);
+  } catch (_) {
+    // Older/non-secure contexts: the text is already selected for manual copy.
+    document.execCommand && document.execCommand('copy');
+  }
+
   const btn = $('#btn-copy-friend-link');
-  const origText = btn.textContent;
-  btn.textContent = 'Copied!';
-  setTimeout(() => { btn.textContent = origText; }, 2000);
-}
-
-// ---------------------------------------------------------------------------
-//  Groups View rendering and handlers
-// ---------------------------------------------------------------------------
-function renderGroupsView(list) {
-  const el = $('#groups-list');
-  const filter = $('#feed-filter');
-
-  const selectedFilter = filter.value;
-
-  filter.innerHTML = `<option value="friends">All</option>`;
-  list.forEach((g) => {
-    const opt = document.createElement('option');
-    opt.value = g.id;
-    opt.textContent = `Group: ${g.name}`;
-    filter.appendChild(opt);
-  });
-  filter.value = selectedFilter;
-
-  if (list.length === 0) {
-    el.innerHTML = '<li class="empty">You are not in any groups yet. Create or join one above!</li>';
-    return;
-  }
-
-  el.innerHTML = list
-    .map((g) => `
-      <li class="run-item">
-        <div class="run-main" style="justify-content:space-between; width:100%; align-items:center;">
-          <div>
-            <strong>${escapeHtml(g.name)}</strong>
-            <div style="font-size: 0.74rem; color: var(--muted); margin-top:2px;">Role: ${g.role}</div>
-          </div>
-          <button class="btn btn-primary btn-sm manage-group-btn" data-id="${g.id}">Manage</button>
-        </div>
-      </li>`)
-    .join('');
-
-  el.querySelectorAll('.manage-group-btn').forEach((btn) => {
-    btn.addEventListener('click', () => onManageGroupClick(btn.dataset.id));
-  });
-
-  if (activeManageGroupId && list.some(g => g.id === activeManageGroupId)) {
-    onManageGroupClick(activeManageGroupId);
-  } else {
-    $('#group-manage-card').hidden = true;
-    activeManageGroupId = null;
-  }
-}
-
-async function onGroupCreateSubmit(e) {
-  e.preventDefault();
-  const field = $('#f-group-name');
-  const msg = $('#group-create-msg');
-  const name = field.value.trim();
-
-  if (!name) return;
-
-  msg.textContent = 'Creating...';
-  try {
-    const group = await createGroup(name);
-    msg.textContent = `Group "${group.name}" created!`;
-    field.value = '';
-    loadGroups();
-    setTimeout(() => { msg.textContent = ''; }, 3000);
-  } catch (err) {
-    msg.textContent = 'Error: ' + err.message;
-  }
-}
-
-async function onGroupJoinSubmit(e) {
-  e.preventDefault();
-  const field = $('#f-invite-code');
-  const msg = $('#group-join-msg');
-  const code = field.value.trim().toUpperCase();
-
-  if (!code) return;
-
-  msg.textContent = 'Joining...';
-  try {
-    const group = await joinGroupByCode(code);
-    msg.textContent = `Joined "${group.name}"!`;
-    field.value = '';
-    loadGroups();
-    loadRuns();
-    setTimeout(() => { msg.textContent = ''; }, 3000);
-  } catch (err) {
-    msg.textContent = 'Error: ' + err.message;
-  }
-}
-
-async function onManageGroupClick(groupId) {
-  activeManageGroupId = groupId;
-  
-  const card = $('#group-manage-card');
-  const nameEl = $('#manage-group-name');
-  const membersList = $('#group-members-list');
-
-  $('#group-invite-display').hidden = true;
-
-  try {
-    const members = await fetchGroupMembers(groupId);
-    const opt = document.querySelector(`#feed-filter option[value="${groupId}"]`);
-    const groupName = opt ? opt.textContent.replace('Group: ', '') : 'Group Details';
-
-    nameEl.textContent = groupName;
-    card.hidden = false;
-
-    membersList.innerHTML = members
-      .map((m) => `
-        <li class="run-item">
-          <div class="run-main" style="justify-content:space-between; width:100%; align-items:center;">
-            <div class="user-profile">
-              ${avatarImg(m.avatar_url)}
-              <strong>${escapeHtml(m.display_name)}</strong>
-            </div>
-            <span style="font-size:0.75rem; color:var(--muted); font-weight:600; text-transform:uppercase;">${m.role}</span>
-          </div>
-        </li>`)
-      .join('');
-  } catch (e) {
-    membersList.innerHTML = `<li class="empty">Error: ${e.message}</li>`;
-  }
-}
-
-async function onGenerateGroupInviteClick() {
-  if (!activeManageGroupId) return;
-  const linkInput = $('#group-invite-link');
-  const box = $('#group-invite-display');
-  
-  try {
-    const code = await getOrCreateGroupInvite(activeManageGroupId);
-    const link = window.location.origin + window.location.pathname + '?invite=' + code;
-    linkInput.value = link;
-    box.hidden = false;
-  } catch (e) {
-    alert('Error generating invite link: ' + e.message);
-  }
-}
-
-function copyGroupInviteLink() {
-  const linkEl = $('#group-invite-link');
-  linkEl.select();
-  navigator.clipboard.writeText(linkEl.value);
-  
-  const btn = $('#btn-copy-group-invite');
   const origText = btn.textContent;
   btn.textContent = 'Copied!';
   setTimeout(() => { btn.textContent = origText; }, 2000);
@@ -1186,6 +1173,10 @@ async function onAddRun(e) {
 
   if (!(distance > 0)) { msg.textContent = 'Enter a distance greater than 0.'; return; }
   if (!date) { msg.textContent = 'Pick a date.'; return; }
+  if (durationRaw && !(Number(durationRaw) > 0)) {
+    msg.textContent = 'Duration must be greater than 0, or leave it blank.';
+    return;
+  }
 
   const run = {
     distance_km: distance,
@@ -1202,7 +1193,7 @@ async function onAddRun(e) {
     await loadRuns();
     e.target.reset();
     $('#f-date').value = todayISO();
-    
+
     // Close the floating modal log dialog
     $('#run-log-modal').hidden = true;
     alert('Added!');
@@ -1266,7 +1257,7 @@ function rangeCutoff(r) {
   if (r === 'month') {
     return local.toISOString().slice(0, 7) + '-01';
   }
-  const day = (local.getUTCDay() + 6) % 7; 
+  const day = (local.getUTCDay() + 6) % 7;
   const monday = new Date(local.getTime() - day * 86400000);
   return monday.toISOString().slice(0, 10);
 }
@@ -1358,7 +1349,7 @@ async function consumeSharedFile() {
 
 function maybeImportShared() {
   if (sharedHandled || !pendingSharedFile) return;
-  if ($('#app').hidden) return; 
+  if ($('#app').hidden) return;
   sharedHandled = true;
   const file = pendingSharedFile;
   pendingSharedFile = null;

@@ -18,6 +18,12 @@ export const supabase = isConfigured
 
 const TABLE = 'runs';
 
+// Cap on how many runs we ever pull in one query: the newest N by date. Plenty
+// of history for a small friend group (years' worth), while keeping the request
+// bounded so it can't balloon as runs accumulate. The leaderboard's "All time"
+// view is computed from this same window.
+const RUN_FETCH_LIMIT = 500;
+
 // ---------------------------------------------------------------------------
 //  Authentication
 // ---------------------------------------------------------------------------
@@ -49,29 +55,15 @@ export async function getCurrentUser() {
 // ---------------------------------------------------------------------------
 //  Runs
 // ---------------------------------------------------------------------------
-export async function fetchRuns(groupId = null) {
+export async function fetchRuns() {
   if (!supabase) return [];
 
-  let query = supabase
+  const { data, error } = await supabase
     .from(TABLE)
-    .select('*, profiles:user_id(display_name, avatar_url)');
-
-  if (groupId) {
-    // Get all user_ids of the group members first
-    const { data: members, error: mErr } = await supabase
-      .from('group_members')
-      .select('user_id')
-      .eq('group_id', groupId);
-    if (mErr) throw mErr;
-    
-    const userIds = (members ?? []).map((m) => m.user_id);
-    if (userIds.length === 0) return [];
-    query = query.in('user_id', userIds);
-  }
-
-  const { data, error } = await query
+    .select('*, profiles:user_id(display_name, avatar_url)')
     .order('run_date', { ascending: false })
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(RUN_FETCH_LIMIT);
 
   if (error) throw error;
   return data ?? [];
@@ -105,6 +97,17 @@ export function subscribeToRuns(onChange, onStatus) {
     .channel('runs-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, () => onChange())
     .subscribe((status) => { if (onStatus) onStatus(status); });
+  return () => supabase.removeChannel(channel);
+}
+
+// Live updates to the friends table (requests sent to/from me, accepts, removals)
+// so incoming requests and the tab badge appear without a reload. RLS scopes the
+// stream to rows involving the signed-in user.
+export function subscribeToFriends(onChange) {
+  const channel = supabase
+    .channel('friends-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, () => onChange())
+    .subscribe();
   return () => supabase.removeChannel(channel);
 }
 
@@ -171,6 +174,19 @@ export async function fetchPendingRequests() {
   return { incoming, outgoing };
 }
 
+// Resolve a short friend code (e.g. "AB12CD") to its profile. The profiles
+// select policy is readable by any signed-in user, so a prospective friend can
+// look someone up by code — no RPC needed. Returns null when no code matches.
+export async function getFriendByCode(code) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, display_name, friend_code')
+    .eq('friend_code', String(code).trim().toUpperCase())
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 // Matches a canonical UUID (Supabase user ids). Validating here keeps a
 // free-text friend id out of the PostgREST .or() filter string below, where
 // stray commas/parens would otherwise corrupt the query.
@@ -230,133 +246,6 @@ export async function removeFriendship(friendshipId) {
 }
 
 // ---------------------------------------------------------------------------
-//  Groups
-// ---------------------------------------------------------------------------
-export async function fetchGroups() {
-  const { data: { session } } = await supabase.auth.getSession();
-  const myId = session?.user?.id;
-  if (!myId) return [];
-
-  const { data, error } = await supabase
-    .from('group_members')
-    .select('role, joined_at, groups:group_id(*)')
-    .eq('user_id', myId);
-
-  if (error) throw error;
-
-  return (data ?? []).map((m) => ({
-    role: m.role,
-    joinedAt: m.joined_at,
-    ...m.groups,
-  }));
-}
-
-export async function createGroup(name) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const myId = session?.user?.id;
-  if (!myId) throw new Error('Not authenticated');
-
-  const { data: group, error: gErr } = await supabase
-    .from('groups')
-    .insert({ name, created_by: myId })
-    .select()
-    .single();
-
-  if (gErr) throw gErr;
-
-  const { error: mErr } = await supabase
-    .from('group_members')
-    .insert({
-      group_id: group.id,
-      user_id: myId,
-      role: 'owner',
-    });
-
-  if (mErr) throw mErr;
-
-  return group;
-}
-
-export async function fetchGroupMembers(groupId) {
-  const { data, error } = await supabase
-    .from('group_members')
-    .select('role, joined_at, profiles:user_id(id, display_name, avatar_url)')
-    .eq('group_id', groupId);
-
-  if (error) throw error;
-
-  return (data ?? []).map((m) => ({
-    role: m.role,
-    joinedAt: m.joined_at,
-    ...m.profiles,
-  }));
-}
-
-export async function getOrCreateGroupInvite(groupId) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const myId = session?.user?.id;
-  if (!myId) throw new Error('Not authenticated');
-
-  const { data: existing, error: fErr } = await supabase
-    .from('group_invites')
-    .select('code')
-    .eq('group_id', groupId)
-    .limit(1);
-
-  if (fErr) throw fErr;
-  if (existing && existing.length > 0) {
-    return existing[0].code;
-  }
-
-  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const { data, error } = await supabase
-    .from('group_invites')
-    .insert({
-      code,
-      group_id: groupId,
-      created_by: myId,
-    })
-    .select()
-    .single();
-
-  // 23505 = unique_violation: a concurrent call already created the code for
-  // this group (unique(group_id)). Re-read and return the winner's code.
-  if (error) {
-    if (error.code === '23505') {
-      const { data: raced, error: reErr } = await supabase
-        .from('group_invites')
-        .select('code')
-        .eq('group_id', groupId)
-        .limit(1);
-      if (reErr) throw reErr;
-      if (raced && raced.length > 0) return raced[0].code;
-    }
-    throw error;
-  }
-  return data.code;
-}
-
-export async function fetchInvite(code) {
-  // get_invite is a SECURITY DEFINER RPC so a prospective member (not yet in the
-  // group) can preview just this one group's name; the group_invites table itself
-  // is readable only by existing members.
-  const { data, error } = await supabase.rpc('get_invite', { invite_code: code });
-  if (error) throw error;
-  if (!data || data.length === 0) return null;
-  // Preserve the previous shape ({ group_id, groups: { name } }) for callers.
-  return { group_id: data[0].group_id, groups: { name: data[0].group_name } };
-}
-
-export async function joinGroupByCode(code) {
-  // Joining goes through a SECURITY DEFINER RPC that validates the code, so a
-  // user can't add themselves to an arbitrary group by guessing its UUID.
-  const { data, error } = await supabase.rpc('join_group_by_code', { invite_code: code });
-  if (error) throw error;
-  if (!data || data.length === 0) throw new Error('Invalid invite code');
-  return { name: data[0].group_name };
-}
-
-// ---------------------------------------------------------------------------
 //  Profile Management
 // ---------------------------------------------------------------------------
 export async function updateProfile(profileData) {
@@ -378,13 +267,16 @@ export async function updateProfile(profileData) {
   return data;
 }
 
-export async function uploadAvatar(file, userId) {
-  const ext = file.name.split('.').pop();
-  const path = `${userId}/${Date.now()}.${ext}`;
+// Upload a cropped avatar. The caller passes an already-processed square WebP
+// Blob (see the cropper in app.js), so files land small and consistent. Stored
+// at "<uid>/<timestamp>.webp" — the leading folder is the owner id, which the
+// storage RLS policy checks.
+export async function uploadAvatar(blob, userId) {
+  const path = `${userId}/${Date.now()}.webp`;
 
   const { error } = await supabase.storage
     .from('avatars')
-    .upload(path, file, { upsert: true });
+    .upload(path, blob, { upsert: true, contentType: 'image/webp' });
 
   if (error) throw error;
 
