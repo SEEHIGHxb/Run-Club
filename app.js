@@ -204,7 +204,7 @@ function init() {
   $('#club-settings-form').addEventListener('submit', onClubSettingsSubmit);
   
   $('#btn-club-to-directory').addEventListener('click', () => {
-    activeClubId = null;
+    activeClubId = 'directory';
     loadClubs();
   });
   $('#btn-club-back-to-dashboard').addEventListener('click', () => {
@@ -470,11 +470,25 @@ function closeInviteModal() {
 // ---------------------------------------------------------------------------
 //  Auth Flow Controls
 // ---------------------------------------------------------------------------
+function resetLeaderboardFilters() {
+  lbType = 'all';
+  range = 'all';
+
+  const btnAll = $('#btn-lb-type-all');
+  const btnClub = $('#btn-lb-type-club');
+  if (btnAll) btnAll.classList.add('active');
+  if (btnClub) btnClub.classList.remove('active');
+
+  document.querySelectorAll('#panel-runs .seg[aria-label="Leaderboard range"] .seg-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.range === 'all');
+  });
+}
+
 async function enterApp() {
+  resetLeaderboardFilters();
   hideBoot();
   $('#gate').style.display = 'none';
   $('#app').hidden = false;
-
   // Set up profile displays
   $('#who-name').textContent = formatDisplayName(me.display_name);
   if (me.avatar_url) {
@@ -1458,8 +1472,7 @@ async function loadClubs() {
   if (!me) return;
   try {
     clubs = await fetchClubs();
-
-    if (activeClubId === null || clubs.length === 0) {
+    if (clubs.length === 0) {
       activeClubId = null;
       activeClub = null;
       activeClubMembers = [];
@@ -1468,18 +1481,27 @@ async function loadClubs() {
       renderLeaderboard();
       return;
     }
+
+    if (activeClubId === 'directory') {
+      activeClub = null;
+      activeClubMembers = [];
+      activeClubRuns = [];
+      renderClubsView();
+      renderLeaderboard();
+      return;
+    }
+
     // Populate active selector
     const selector = $('#club-selector');
     selector.innerHTML = clubs
       .map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
       .join('');
 
-    // Select first club if current active is invalid
+    // Select first club if current active is invalid or unset
     if (!activeClubId || !clubs.some(c => c.id === activeClubId)) {
       activeClubId = clubs[0].id;
     }
     selector.value = activeClubId;
-
     // Load active club details
     activeClub = await fetchClubDetails(activeClubId);
     activeClubMembers = await fetchClubMembers(activeClubId);
