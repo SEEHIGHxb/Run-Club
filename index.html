@@ -86,15 +86,30 @@
       <div class="grid-2">
         <!-- Leaderboard -->
         <section class="card">
-          <div class="card-head">
-            <h2>Leaderboard</h2>
-            <div class="seg" role="tablist" aria-label="Leaderboard range">
+          <div class="card-head" style="flex-direction: column; align-items: stretch; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; flex-wrap: wrap; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <h2>Leaderboard</h2>
+                <div class="seg" id="leaderboard-type-seg" role="tablist">
+                  <button class="seg-btn active" id="btn-lb-type-all" data-type="all" role="tab">All</button>
+                  <button class="seg-btn" id="btn-lb-type-club" data-type="club" role="tab">Club</button>
+                </div>
+              </div>
+              <span id="lb-type-label" class="section-desc" style="margin: 0; font-weight: 600; color: var(--brand);"></span>
+            </div>
+            <div class="seg" role="tablist" aria-label="Leaderboard range" style="align-self: flex-start;">
               <button class="seg-btn active" data-range="all" role="tab">All time</button>
               <button class="seg-btn" data-range="month" role="tab">This month</button>
               <button class="seg-btn" data-range="week" role="tab">This week</button>
             </div>
           </div>
           <ol id="leaderboard" class="leaderboard"></ol>
+
+          <!-- Club "Run or Lose" Pool (shown below leaderboard on main page when Club toggle active) -->
+          <div id="main-baht-section" style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 15px;" hidden>
+            <h3 style="margin-bottom: 10px;">Run or Lose Pool</h3>
+            <ul id="main-baht-list" class="leaderboard"></ul>
+          </div>
         </section>
 
         <!-- Recent runs -->
@@ -165,6 +180,9 @@
     <div id="panel-clubs" class="tab-panel" hidden>
       <!-- State A: Not joined any clubs -->
       <div id="club-empty-state">
+        <div id="club-back-to-dashboard-container" style="margin-bottom: 16px; display: none;">
+          <button id="btn-club-back-to-dashboard" class="btn btn-ghost btn-sm">← Back</button>
+        </div>
         <div class="grid-2">
           <!-- Create Club -->
           <section class="card">
@@ -226,8 +244,7 @@
               <select id="club-selector" class="filter-select" style="flex: 1; max-width: 250px; font-weight: 600;"></select>
             </div>
             <div style="display: flex; gap: 8px;">
-              <button id="btn-club-quick-join" class="btn btn-ghost btn-sm">+ Join Club</button>
-              <button id="btn-club-quick-create" class="btn btn-ghost btn-sm">+ Create Club</button>
+              <button id="btn-club-to-directory" class="btn btn-ghost btn-sm">+ Join/Create Club</button>
             </div>
           </div>
         </div>

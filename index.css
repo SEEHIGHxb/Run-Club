@@ -414,6 +414,35 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
   .run-form > * { grid-column: 1 / -1; }
   .run-form > .field:has(#f-duration) { grid-column: 1 / 2; }
   .run-form > .field:has(#f-date) { grid-column: 2 / 3; }
+
+  /* Mobile leaderboard adjustments */
+  .lb-row {
+    grid-template-columns: 20px 1fr auto auto;
+    gap: 6px;
+    padding: 8px 6px;
+  }
+  .lb-rank {
+    text-align: left;
+    font-size: 0.95rem;
+  }
+  .lb-row .user-profile {
+    padding: 0;
+  }
+  .lb-name {
+    font-size: 0.88rem;
+  }
+  .lb-runs {
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  .lb-km {
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .lb-row .avatar {
+    width: 20px !important;
+    height: 20px !important;
+  }
 }
 
 /* Owner badge in member lists */

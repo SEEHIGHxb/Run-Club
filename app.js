@@ -63,9 +63,11 @@ let activeClubId = null;        // active club ID
 let activeClub = null;          // active club details
 let activeClubMembers = [];     // members of the active club
 let activeClubRuns = [];        // runs of active club members
-let clubRange = 'all';         // week | month | all
+let clubRange = 'all';          // week | month | all
 let unsubscribeClubs = null;    // clubs realtime teardown
 let pendingClubAction = null;   // club invite link action from a URL (?c=INVITE_CODE)
+let lbType = 'all';             // main page leaderboard type (all | club)
+let lastActiveClubId = null;    // last viewed active club ID
 
 // ---------------------------------------------------------------------------
 //  Startup
@@ -206,13 +208,13 @@ function init() {
   $('#btn-delete-club').addEventListener('click', onDeleteClubClick);
   $('#club-settings-form').addEventListener('submit', onClubSettingsSubmit);
   
-  $('#btn-club-quick-create').addEventListener('click', () => {
+  $('#btn-club-to-directory').addEventListener('click', () => {
     activeClubId = null;
-    renderClubsView();
+    loadClubs();
   });
-  $('#btn-club-quick-join').addEventListener('click', () => {
-    activeClubId = null;
-    renderClubsView();
+  $('#btn-club-back-to-dashboard').addEventListener('click', () => {
+    activeClubId = lastActiveClubId || (clubs.length > 0 ? clubs[0].id : null);
+    loadClubs();
   });
 
   $('#f-club-create-pool').addEventListener('change', (e) => {
@@ -232,6 +234,20 @@ function init() {
 
   $('#btn-club-invite-accept').addEventListener('click', acceptPendingClubAction);
   $('#btn-club-invite-decline').addEventListener('click', closeClubInviteModal);
+
+  // Main Page Leaderboard Switcher
+  $('#btn-lb-type-all').addEventListener('click', () => {
+    lbType = 'all';
+    $('#btn-lb-type-all').classList.add('active');
+    $('#btn-lb-type-club').classList.remove('active');
+    renderLeaderboard();
+  });
+  $('#btn-lb-type-club').addEventListener('click', () => {
+    lbType = 'club';
+    $('#btn-lb-type-club').classList.add('active');
+    $('#btn-lb-type-all').classList.remove('active');
+    renderLeaderboard();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -859,148 +875,119 @@ function renderAll() {
 //  Leaderboard Panel & Baht Challenge rendering
 // ---------------------------------------------------------------------------
 function renderLeaderboard() {
-  const cutoff = rangeCutoff(range);
-  const inRange = runs.filter((r) => (cutoff ? r.run_date >= cutoff : true));
-
-  const totals = new Map();
-  for (const r of inRange) {
-    const name = formatDisplayName(r.profiles?.display_name || 'Anonymous');
-    const avatar = r.profiles?.avatar_url || '';
-    const cur = totals.get(r.user_id) || { name, avatar, km: 0, runs: 0 };
-    cur.km += Number(r.distance_km);
-    cur.runs += 1;
-    totals.set(r.user_id, cur);
-  }
-
-  const ranked = [...totals.entries()]
-    .map(([userId, t]) => ({ userId, ...t }))
-    .sort((a, b) => b.km - a.km);
-
+  const label = $('#lb-type-label');
+  const mainBahtSection = $('#main-baht-section');
   const el = $('#leaderboard');
-  if (ranked.length === 0) {
-    el.innerHTML = `<li class="empty">No runs in this range yet.</li>`;
-    // Also clear Baht challenge list if empty
-    const bahtList = $('#baht-challenge-list');
-    if (bahtList) bahtList.innerHTML = `<li class="empty">No runs logged yet.</li>`;
-    return;
-  }
 
-  el.innerHTML = ranked
-    .map((row, i) => `
-      <li class="lb-row${row.userId === me.id ? ' is-me' : ''}">
-        <span class="lb-rank">${i + 1}</span>
-        <div class="user-profile">
-          ${avatarImg(row.avatar, ' style="width:24px; height:24px;"')}
-          <span class="lb-name">${escapeHtml(row.name)}</span>
-        </div>
-        <span class="lb-runs">${row.runs} run${row.runs === 1 ? '' : 's'}</span>
-        <span class="lb-km">${fmtKm(row.km)}</span>
-      </li>`)
-    .join('');
+  if (lbType === 'all') {
+    if (label) label.textContent = 'All Friends';
+    if (mainBahtSection) mainBahtSection.hidden = true;
 
-  // Calculate Baht Challenge
-  renderBahtChallenge(ranked);
-}
+    const cutoff = rangeCutoff(range);
+    const inRange = runs.filter((r) => (cutoff ? r.run_date >= cutoff : true));
 
-// Baht per km that a below-average runner owes into the pool. Named so the
-// scaling of the zero-sum payout is explicit rather than a magic literal.
-const BAHT_PER_KM = 10;
-const MAX_LOSS_BAHT = 200; // Cap the maximum Baht loss to keep it casual
-
-function renderBahtChallenge(ranked) {
-  const bahtList = $('#baht-challenge-list');
-  if (!bahtList) return;
-
-  // Build the full pool: every eligible person (poolRoster) seeded at 0 km,
-  // then overlaid with the km they actually logged in this range. Someone who
-  // didn't run stays at 0 and takes the biggest loss — "Run or Lose". We also
-  // fold in any ranked runner not on the roster so leaderboard and pool stay in
-  // sync.
-  const pool = new Map();
-  for (const m of poolRoster) {
-    pool.set(m.userId, { userId: m.userId, name: m.name, avatar: m.avatar, km: 0, runs: 0 });
-  }
-  for (const r of ranked) {
-    pool.set(r.userId, { userId: r.userId, name: r.name, avatar: r.avatar, km: r.km, runs: r.runs });
-  }
-  const participants = [...pool.values()].sort((a, b) => b.km - a.km);
-
-  if (participants.length <= 1) {
-    bahtList.innerHTML = `<li class="empty">Need at least 2 runners to calculate pool.</li>`;
-    return;
-  }
-
-  // 1. Calculate raw diff for each runner comparing to average of others
-  const runnersCalculated = participants.map((row) => {
-    const otherRunners = participants.filter((r) => r.userId !== row.userId);
-    const otherSum = sum(otherRunners.map(r => r.km));
-    const otherAvg = otherSum / otherRunners.length;
-    const diff = row.km - otherAvg;
-    const rawLoss = diff < 0 ? -diff * BAHT_PER_KM : 0;
-    const loss = Math.min(rawLoss, MAX_LOSS_BAHT);
-    return {
-      ...row,
-      diff,
-      loss
-    };
-  });
-
-  const totalLossPool = sum(runnersCalculated.map(r => r.loss));
-  const winners = runnersCalculated.filter(r => r.diff > 0);
-  const totalWinnerDiffs = sum(winners.map(r => r.diff));
-
-  // 2. Distribute total loss to winners proportionally
-  const challengeRows = runnersCalculated.map((row) => {
-    let amount = 0;
-    let type = 'neutral'; // gain | lose | neutral
-
-    if (row.diff < 0) {
-      amount = row.loss;
-      type = 'lose';
-    } else if (row.diff > 0 && totalWinnerDiffs > 0) {
-      amount = totalLossPool * (row.diff / totalWinnerDiffs);
-      type = 'gain';
+    const totals = new Map();
+    for (const r of inRange) {
+      const name = formatDisplayName(r.profiles?.display_name || 'Anonymous');
+      const avatar = r.profiles?.avatar_url || '';
+      const cur = totals.get(r.user_id) || { name, avatar, km: 0, runs: 0 };
+      cur.km += Number(r.distance_km);
+      cur.runs += 1;
+      totals.set(r.user_id, cur);
     }
 
-    return {
-      ...row,
-      amount,
-      type
-    };
-  });
+    const ranked = [...totals.entries()]
+      .map(([userId, t]) => ({ userId, ...t }))
+      .sort((a, b) => b.km - a.km);
 
-  // 3. Render challenge rows
-  bahtList.innerHTML = challengeRows
-    .map((row) => {
-      let text = '';
-      let badgeClass = '';
-      if (row.type === 'gain') {
-        text = `gain ${row.amount.toFixed(2)} baht`;
-        badgeClass = 'baht-gain';
-      } else if (row.type === 'lose') {
-        text = `lose ${row.amount.toFixed(2)} baht`;
-        badgeClass = 'baht-lose';
-      } else {
-        text = `gain 0.00 baht`;
-        badgeClass = 'baht-neutral';
-      }
+    if (ranked.length === 0) {
+      el.innerHTML = `<li class="empty">No runs in this range yet.</li>`;
+      return;
+    }
 
-      const isMe = row.userId === me.id;
-
-      return `
-        <li class="lb-row${isMe ? ' is-me' : ''}" style="grid-template-columns: auto 1fr auto;">
+    el.innerHTML = ranked
+      .map((row, i) => `
+        <li class="lb-row${row.userId === me.id ? ' is-me' : ''}">
+          <span class="lb-rank">${i + 1}</span>
           <div class="user-profile">
-            ${avatarImg(row.avatar, ' style="width:20px; height:20px;"')}
-            <span class="lb-name" style="font-size:0.9rem;">${escapeHtml(row.name)}</span>
-            ${isMe ? '<span class="you-chip">You</span>' : ''}
+            ${avatarImg(row.avatar, ' style="width:24px; height:24px;"')}
+            <span class="lb-name">${escapeHtml(row.name)}</span>
           </div>
-          <span></span>
-          <span class="baht-badge ${badgeClass}">
-            ${text}
-          </span>
-        </li>`;
-    })
-    .join('');
+          <span class="lb-runs">${row.runs} run${row.runs === 1 ? '' : 's'}</span>
+          <span class="lb-km">${fmtKm(row.km)}</span>
+        </li>`)
+      .join('');
+  } else {
+    // lbType === 'club'
+    if (!activeClub) {
+      if (label) label.textContent = 'No active club';
+      if (mainBahtSection) mainBahtSection.hidden = true;
+      el.innerHTML = `<li class="empty">You are not in any club yet. <a href="#" id="link-switch-to-clubs" style="color:var(--brand); font-weight:600; text-decoration:underline;">Join or create a club</a> to view the club leaderboard.</li>`;
+      
+      setTimeout(() => {
+        const link = $('#link-switch-to-clubs');
+        if (link) {
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchTab('clubs');
+          });
+        }
+      }, 0);
+      return;
+    }
+
+    if (label) label.textContent = `Club: ${activeClub.name}`;
+
+    const cutoff = rangeCutoff(range);
+    const inRange = activeClubRuns.filter((r) => (cutoff ? r.run_date >= cutoff : true));
+
+    const totals = new Map();
+    // Initialize everyone in the club to 0 km
+    for (const m of activeClubMembers) {
+      totals.set(m.id, { name: formatDisplayName(m.display_name || 'Anonymous'), avatar: m.avatar_url || '', km: 0, runs: 0 });
+    }
+
+    for (const r of inRange) {
+      if (totals.has(r.user_id)) {
+        const cur = totals.get(r.user_id);
+        cur.km += Number(r.distance_km);
+        cur.runs += 1;
+      }
+    }
+
+    const ranked = [...totals.entries()]
+      .map(([userId, t]) => ({ userId, ...t }))
+      .sort((a, b) => b.km - a.km);
+
+    if (ranked.length === 0) {
+      el.innerHTML = `<li class="empty">No runs in this range yet.</li>`;
+      if (mainBahtSection) mainBahtSection.hidden = true;
+      return;
+    }
+
+    el.innerHTML = ranked
+      .map((row, i) => `
+        <li class="lb-row${row.userId === me.id ? ' is-me' : ''}">
+          <span class="lb-rank">${i + 1}</span>
+          <div class="user-profile">
+            ${avatarImg(row.avatar, ' style="width:24px; height:24px;"')}
+            <span class="lb-name">${escapeHtml(row.name)}</span>
+          </div>
+          <span class="lb-runs">${row.runs} run${row.runs === 1 ? '' : 's'}</span>
+          <span class="lb-km">${fmtKm(row.km)}</span>
+        </li>`)
+      .join('');
+
+    // Handle Baht Challenge for club on the main page
+    if (activeClub.pool_enabled && ranked.length > 1) {
+      if (mainBahtSection) {
+        mainBahtSection.hidden = false;
+        renderClubBahtChallenge(ranked, '#main-baht-list');
+      }
+    } else {
+      if (mainBahtSection) mainBahtSection.hidden = true;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,7 +1490,9 @@ async function loadClubs() {
     activeClubMembers = await fetchClubMembers(activeClubId);
     activeClubRuns = await fetchClubRuns(activeClubMembers.map(m => m.id));
 
+    lastActiveClubId = activeClubId;
     renderClubsView();
+    renderLeaderboard();
   } catch (err) {
     console.error('Error loading clubs:', err);
   }
@@ -1514,9 +1503,12 @@ function renderClubsView() {
   $('#club-empty-state').hidden = !isEmpty;
   $('#club-active-state').hidden = isEmpty;
 
-  if (isEmpty) return;
+  if (isEmpty) {
+    const backBtn = $('#club-back-to-dashboard-container');
+    if (backBtn) backBtn.style.display = (clubs.length > 0) ? 'block' : 'none';
+    return;
+  }
 
-  // Render Details
   const isOwner = activeClub.owner_id === me.id;
   const ownerProfile = activeClubMembers.find(m => m.id === activeClub.owner_id);
   $('#club-owner-name').textContent = ownerProfile ? formatDisplayName(ownerProfile.display_name) : 'Unknown';
@@ -1622,16 +1614,15 @@ function renderClubLeaderboard() {
   const bahtSection = $('#club-baht-section');
   if (activeClub.pool_enabled && ranked.length > 1) {
     bahtSection.hidden = false;
-    renderClubBahtChallenge(ranked);
+    renderClubBahtChallenge(ranked, '#club-baht-list');
   } else {
     bahtSection.hidden = true;
   }
 }
 
-function renderClubBahtChallenge(ranked) {
-  const bahtList = $('#club-baht-list');
+function renderClubBahtChallenge(ranked, targetSelector = '#club-baht-list') {
+  const bahtList = $(targetSelector);
   if (!bahtList) return;
-
   const bahtPerKm = Number(activeClub.pool_baht_per_km);
   const maxLoss = Number(activeClub.pool_max_loss);
 
