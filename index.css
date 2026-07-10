@@ -25,12 +25,12 @@
   --ink: #ffffff;
   --muted: #aaaaaa;
   --line: #2d2d2d;
-  --brand: #ff0000;
+  --brand: #ff4545;
   --brand-ink: #ffffff;
-  --brand-soft: #3a0000;
+  --brand-soft: #4a1010;
   --shadow: 0 1px 3px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
   --switch-bg: #2d2d2d;
-  --switch-handle: #ff0000;
+  --switch-handle: #ff4545;
 }
 
 * { box-sizing: border-box; }
@@ -414,4 +414,11 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
   .run-form > * { grid-column: 1 / -1; }
   .run-form > .field:has(#f-duration) { grid-column: 1 / 2; }
   .run-form > .field:has(#f-date) { grid-column: 2 / 3; }
+}
+
+/* Owner badge in member lists */
+.owner-chip {
+  display: inline-block; margin-left: 6px; padding: 1px 9px;
+  border-radius: 50px; background: var(--brand-soft); color: var(--brand);
+  font-size: 0.68rem; font-weight: 700; vertical-align: middle;
 }

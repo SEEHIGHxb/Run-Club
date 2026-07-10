@@ -87,10 +87,17 @@ function parseGpx(text) {
   for (const p of pts) {
     const lat = parseFloat(p.getAttribute('lat'));
     const lon = parseFloat(p.getAttribute('lon'));
-    if (prev && Number.isFinite(lat) && Number.isFinite(lon)) {
-      distanceM += haversine(prev.lat, prev.lon, lat, lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      if (!prev) {
+        prev = { lat, lon };
+      } else {
+        const stepDist = haversine(prev.lat, prev.lon, lat, lon);
+        if (stepDist > 3) {
+          distanceM += stepDist;
+          prev = { lat, lon };
+        }
+      }
     }
-    if (Number.isFinite(lat) && Number.isFinite(lon)) prev = { lat, lon };
 
     const t = text1(p, 'time');
     if (t) { if (!firstT) firstT = t; lastT = t; }

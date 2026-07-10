@@ -248,22 +248,49 @@ export async function removeFriendship(friendshipId) {
 // ---------------------------------------------------------------------------
 //  Profile Management
 // ---------------------------------------------------------------------------
+async function deleteOldAvatar(url) {
+  if (!url) return;
+  const prefix = `${SUPABASE_URL}/storage/v1/object/public/avatars/`;
+  if (url.startsWith(prefix)) {
+    const path = url.substring(prefix.length);
+    await supabase.storage
+      .from('avatars')
+      .remove([path])
+      .catch((err) => console.error('Failed to delete old avatar:', err));
+  }
+}
+
 export async function updateProfile(profileData) {
   const { data: { session } } = await supabase.auth.getSession();
   const myId = session?.user?.id;
   if (!myId) throw new Error('Not authenticated');
 
+  // Fetch current profile to get the old avatar URL
+  const { data: currentProfile } = await supabase
+    .from('profiles')
+    .select('avatar_url')
+    .eq('id', myId)
+    .single();
+  const oldUrl = currentProfile?.avatar_url;
+  const newUrl = profileData.avatar_url;
+
   const { data, error } = await supabase
     .from('profiles')
     .update({
       display_name: profileData.display_name,
-      avatar_url: profileData.avatar_url,
+      avatar_url: newUrl,
     })
     .eq('id', myId)
     .select()
     .single();
 
   if (error) throw error;
+
+  // Clean up old avatar if it has been replaced
+  if (oldUrl && oldUrl !== newUrl) {
+    await deleteOldAvatar(oldUrl);
+  }
+
   return data;
 }
 
@@ -285,4 +312,167 @@ export async function uploadAvatar(blob, userId) {
     .getPublicUrl(path);
 
   return data.publicUrl;
+}
+
+// ---------------------------------------------------------------------------
+//  Clubs Management
+// ---------------------------------------------------------------------------
+export async function fetchClubs() {
+  const { data: { session } } = await supabase.auth.getSession();
+  const myId = session?.user?.id;
+  if (!myId) return [];
+
+  const { data, error } = await supabase
+    .from('club_members')
+    .select('club_id, clubs:club_id(*)')
+    .eq('user_id', myId);
+
+  if (error) throw error;
+  return (data ?? []).map((cm) => cm.clubs).filter(Boolean);
+}
+
+export async function fetchClubDetails(clubId) {
+  const { data, error } = await supabase
+    .from('clubs')
+    .select('*')
+    .eq('id', clubId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function fetchClubMembers(clubId) {
+  const { data, error } = await supabase
+    .from('club_members')
+    .select('user_id, profiles:user_id(*)')
+    .eq('club_id', clubId);
+  if (error) throw error;
+  return (data ?? []).map((cm) => cm.profiles).filter(Boolean);
+}
+
+export async function fetchClubRuns(memberIds) {
+  if (!supabase || !memberIds || memberIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('runs')
+    .select('*, profiles:user_id(display_name, avatar_url)')
+    .in('user_id', memberIds)
+    .order('run_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(RUN_FETCH_LIMIT);
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createClub(name, poolEnabled, bahtPerKm = 10, maxLoss = 200) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const myId = session?.user?.id;
+  if (!myId) throw new Error('Not authenticated');
+
+  const { data: club, error: clubErr } = await supabase
+    .from('clubs')
+    .insert({
+      name,
+      owner_id: myId,
+      pool_enabled: poolEnabled,
+      pool_baht_per_km: Number(bahtPerKm),
+      pool_max_loss: Number(maxLoss),
+    })
+    .select()
+    .single();
+
+  if (clubErr) throw clubErr;
+
+  const { error: memErr } = await supabase
+    .from('club_members')
+    .insert({
+      club_id: club.id,
+      user_id: myId,
+    });
+
+  if (memErr) throw memErr;
+  return club;
+}
+
+export async function joinClub(inviteCode) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const myId = session?.user?.id;
+  if (!myId) throw new Error('Not authenticated');
+
+  const code = String(inviteCode).trim().toUpperCase();
+
+  const { data: club, error: findErr } = await supabase
+    .from('clubs')
+    .select('id, name')
+    .eq('invite_code', code)
+    .maybeSingle();
+
+  if (findErr) throw findErr;
+  if (!club) throw new Error('No club found with that invite code.');
+
+  const { error: joinErr } = await supabase
+    .from('club_members')
+    .insert({
+      club_id: club.id,
+      user_id: myId,
+    });
+
+  if (joinErr && joinErr.code === '23505') {
+    throw new Error('You are already a member of this club!');
+  }
+  if (joinErr) throw joinErr;
+
+  return club;
+}
+
+export async function leaveClub(clubId, userId = null) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const myId = session?.user?.id;
+  if (!myId) throw new Error('Not authenticated');
+
+  const targetUserId = userId || myId;
+
+  const { error } = await supabase
+    .from('club_members')
+    .delete()
+    .eq('club_id', clubId)
+    .eq('user_id', targetUserId);
+
+  if (error) throw error;
+}
+
+export async function deleteClub(clubId) {
+  const { error } = await supabase
+    .from('clubs')
+    .delete()
+    .eq('id', clubId);
+  if (error) throw error;
+}
+
+export async function updateClubSettings(clubId, settings) {
+  const { data, error } = await supabase
+    .from('clubs')
+    .update({
+      name: settings.name,
+      pool_enabled: settings.pool_enabled,
+      pool_baht_per_km: Number(settings.pool_baht_per_km),
+      pool_max_loss: Number(settings.pool_max_loss),
+    })
+    .eq('id', clubId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export function subscribeToClubs(onChange) {
+  if (!supabase) return () => {};
+  const channel = supabase
+    .channel('clubs-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'clubs' }, () => onChange())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'club_members' }, () => onChange())
+    .subscribe();
+  return () => supabase.removeChannel(channel);
 }

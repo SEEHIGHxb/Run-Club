@@ -25,6 +25,16 @@ import {
   removeFriendship,
   updateProfile,
   uploadAvatar,
+  fetchClubs,
+  fetchClubDetails,
+  fetchClubMembers,
+  fetchClubRuns,
+  createClub,
+  joinClub,
+  leaveClub,
+  deleteClub,
+  updateClubSettings,
+  subscribeToClubs,
 } from './db.js?v=3';
 import { parseActivityFile } from './parse.js';
 
@@ -46,6 +56,16 @@ let pendingSharedFile = null;   // watch activity files from Android share sheet
 let sharedHandled = false;
 let authResolved = false;       // has Supabase emitted its first auth event yet?
 let pendingAvatarBlob = null;   // cropped avatar awaiting profile save
+
+// Clubs State
+let clubs = [];                 // list of user's clubs
+let activeClubId = null;        // active club ID
+let activeClub = null;          // active club details
+let activeClubMembers = [];     // members of the active club
+let activeClubRuns = [];        // runs of active club members
+let clubRange = 'week';         // week | month | all
+let unsubscribeClubs = null;    // clubs realtime teardown
+let pendingClubAction = null;   // club invite link action from a URL (?c=INVITE_CODE)
 
 // ---------------------------------------------------------------------------
 //  Startup
@@ -70,7 +90,7 @@ function init() {
     return;
   }
 
-  // 1. Check URL query parameters for friend links first
+  // 1. Check URL query parameters for links first
   checkUrlParams();
 
   // 2. Auth state change listener
@@ -141,9 +161,15 @@ function init() {
   });
 
   document.querySelectorAll('.seg-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      // Ignore click if it's on the clubs range selector
+      if (btn.classList.contains('club-range-btn')) return;
       range = btn.dataset.range;
-      document.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('.seg-btn').forEach((b) => {
+        if (!b.classList.contains('club-range-btn')) {
+          b.classList.toggle('active', b === btn);
+        }
+      });
       renderLeaderboard();
     });
   });
@@ -167,6 +193,45 @@ function init() {
 
   // Avatar cropper controls
   initAvatarCropper();
+
+  // Clubs Event Listeners
+  $('#club-create-form').addEventListener('submit', onClubCreateSubmit);
+  $('#club-join-form').addEventListener('submit', onClubJoinSubmit);
+  $('#club-selector').addEventListener('change', (e) => {
+    activeClubId = e.target.value || null;
+    loadClubs();
+  });
+  $('#btn-copy-club-link').addEventListener('click', copyClubLink);
+  $('#btn-leave-club').addEventListener('click', onLeaveClubClick);
+  $('#btn-delete-club').addEventListener('click', onDeleteClubClick);
+  $('#club-settings-form').addEventListener('submit', onClubSettingsSubmit);
+  
+  $('#btn-club-quick-create').addEventListener('click', () => {
+    activeClubId = null;
+    renderClubsView();
+  });
+  $('#btn-club-quick-join').addEventListener('click', () => {
+    activeClubId = null;
+    renderClubsView();
+  });
+
+  $('#f-club-create-pool').addEventListener('change', (e) => {
+    $('#club-create-pool-details').style.display = e.target.checked ? 'flex' : 'none';
+  });
+  $('#f-club-settings-pool').addEventListener('change', (e) => {
+    $('#club-settings-pool-details').style.display = e.target.checked ? 'flex' : 'none';
+  });
+
+  document.querySelectorAll('.club-range-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      clubRange = btn.dataset.range;
+      document.querySelectorAll('.club-range-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      renderClubLeaderboard();
+    });
+  });
+
+  $('#btn-club-invite-accept').addEventListener('click', acceptPendingClubAction);
+  $('#btn-club-invite-decline').addEventListener('click', closeClubInviteModal);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +372,7 @@ function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const friendCode = params.get('f');          // new short link: ?f=AB12CD
   const addFriend = params.get('add-friend');   // legacy link: ?add-friend=<uuid>
+  const clubCode = params.get('c');            // club invite link: ?c=XY12AB
 
   if (friendCode) {
     pendingAction = { type: 'friend', code: friendCode };
@@ -314,8 +380,12 @@ function checkUrlParams() {
     pendingAction = { type: 'friend', id: addFriend };
   }
 
+  if (clubCode) {
+    pendingClubAction = { type: 'club', code: clubCode };
+  }
+
   // Clear query parameters from address bar to keep things tidy
-  if (friendCode || addFriend) {
+  if (friendCode || addFriend || clubCode) {
     window.history.replaceState({}, document.title, window.location.pathname);
   }
 }
@@ -395,7 +465,7 @@ async function enterApp() {
   $('#app').hidden = false;
 
   // Set up profile displays
-  $('#who-name').textContent = me.display_name;
+  $('#who-name').textContent = formatDisplayName(me.display_name);
   if (me.avatar_url) {
     const avatar = $('#who-avatar');
     avatar.src = me.avatar_url;
@@ -416,22 +486,29 @@ async function enterApp() {
   await Promise.all([
     loadRuns(),
     loadFriends(),
+    loadClubs(),
   ]);
 
   // Handle URL requests if they exist
   if (pendingAction) {
     handlePendingAction();
   }
+  if (pendingClubAction) {
+    handlePendingClubAction();
+  }
 
   // Subscribe to realtime changes. Runs drive the live feed; friend changes
   // refresh the requests list, the tab badge, and the pool (a new friend's runs
   // become visible).
   unsubscribe = subscribeToRuns(
-    async () => { await loadRuns(); },
+    async () => { await loadRuns(); if (activeClubId) await loadClubs(); },
     (status) => setLive(status === 'SUBSCRIBED'),
   );
   unsubscribeFriends = subscribeToFriends(async () => {
     await Promise.all([loadFriends(), loadRuns()]);
+  });
+  unsubscribeClubs = subscribeToClubs(async () => {
+    await loadClubs();
   });
 }
 
@@ -448,6 +525,10 @@ function exitApp() {
   if (unsubscribeFriends) {
     unsubscribeFriends();
     unsubscribeFriends = null;
+  }
+  if (unsubscribeClubs) {
+    unsubscribeClubs();
+    unsubscribeClubs = null;
   }
 }
 
@@ -477,6 +558,8 @@ function switchTab(tabId) {
     loadFriends();
   } else if (tabId === 'runs') {
     loadRuns();
+  } else if (tabId === 'clubs') {
+    loadClubs();
   } else if (tabId === 'profile') {
     loadProfileTab();
   }
@@ -544,7 +627,7 @@ async function onProfileSubmit(e) {
     pendingAvatarBlob = null;
 
     // Update header displays
-    $('#who-name').textContent = me.display_name;
+    $('#who-name').textContent = formatDisplayName(me.display_name);
     if (me.avatar_url) {
       const avatar = $('#who-avatar');
       avatar.src = me.avatar_url;
@@ -737,14 +820,14 @@ async function buildPoolRoster() {
     const friends = await fetchFriends();
     const roster = [{
       userId: me.id,
-      name: me.display_name || 'Anonymous',
+      name: formatDisplayName(me.display_name || 'Anonymous'),
       avatar: me.avatar_url || '',
     }];
     for (const f of friends) {
       if (f.user) {
         roster.push({
           userId: f.user.id,
-          name: f.user.display_name || 'Anonymous',
+          name: formatDisplayName(f.user.display_name || 'Anonymous'),
           avatar: f.user.avatar_url || '',
         });
       }
@@ -781,7 +864,7 @@ function renderLeaderboard() {
 
   const totals = new Map();
   for (const r of inRange) {
-    const name = r.profiles?.display_name || 'Anonymous';
+    const name = formatDisplayName(r.profiles?.display_name || 'Anonymous');
     const avatar = r.profiles?.avatar_url || '';
     const cur = totals.get(r.user_id) || { name, avatar, km: 0, runs: 0 };
     cur.km += Number(r.distance_km);
@@ -822,6 +905,7 @@ function renderLeaderboard() {
 // Baht per km that a below-average runner owes into the pool. Named so the
 // scaling of the zero-sum payout is explicit rather than a magic literal.
 const BAHT_PER_KM = 10;
+const MAX_LOSS_BAHT = 200; // Cap the maximum Baht loss to keep it casual
 
 function renderBahtChallenge(ranked) {
   const bahtList = $('#baht-challenge-list');
@@ -852,17 +936,20 @@ function renderBahtChallenge(ranked) {
     const otherSum = sum(otherRunners.map(r => r.km));
     const otherAvg = otherSum / otherRunners.length;
     const diff = row.km - otherAvg;
+    const rawLoss = diff < 0 ? -diff * BAHT_PER_KM : 0;
+    const loss = Math.min(rawLoss, MAX_LOSS_BAHT);
     return {
       ...row,
       diff,
-      loss: diff < 0 ? -diff * BAHT_PER_KM : 0
+      loss
     };
   });
 
   const totalLossPool = sum(runnersCalculated.map(r => r.loss));
-  const winnerCount = runnersCalculated.filter(r => r.diff > 0).length;
+  const winners = runnersCalculated.filter(r => r.diff > 0);
+  const totalWinnerDiffs = sum(winners.map(r => r.diff));
 
-  // 2. Distribute total loss to winners
+  // 2. Distribute total loss to winners proportionally
   const challengeRows = runnersCalculated.map((row) => {
     let amount = 0;
     let type = 'neutral'; // gain | lose | neutral
@@ -870,8 +957,8 @@ function renderBahtChallenge(ranked) {
     if (row.diff < 0) {
       amount = row.loss;
       type = 'lose';
-    } else if (row.diff > 0 && winnerCount > 0) {
-      amount = totalLossPool / winnerCount;
+    } else if (row.diff > 0 && totalWinnerDiffs > 0) {
+      amount = totalLossPool * (row.diff / totalWinnerDiffs);
       type = 'gain';
     }
 
@@ -932,7 +1019,7 @@ function renderRuns() {
     .map((r) => {
       const pace = paceLabel(r.distance_km, r.duration_min);
       const isMine = r.user_id === me.id;
-      const runnerName = r.profiles?.display_name || 'Anonymous';
+      const runnerName = formatDisplayName(r.profiles?.display_name || 'Anonymous');
       const avatar = r.profiles?.avatar_url || '';
 
       return `
@@ -975,7 +1062,7 @@ function renderFriendsView(friends, incoming, outgoing) {
           <div class="run-main" style="justify-content:space-between; width:100%; align-items:center;">
             <div class="user-profile">
               ${avatarImg(f.user.avatar_url)}
-              <strong>${escapeHtml(f.user.display_name)}</strong>
+              <strong>${escapeHtml(formatDisplayName(f.user.display_name))}</strong>
             </div>
             <button class="btn btn-ghost btn-sm remove-friend-btn" data-id="${f.friendshipId}">Remove</button>
           </div>
@@ -999,10 +1086,10 @@ function renderFriendsView(friends, incoming, outgoing) {
     incList.innerHTML = incoming
       .map((req) => `
         <li class="run-item">
-          <div class="user-profile">
-            ${avatarImg(req.sender.avatar_url)}
-            <span><strong>${escapeHtml(req.sender.display_name)}</strong> wants to be friends</span>
-          </div>
+            <div class="user-profile">
+              ${avatarImg(req.sender.avatar_url)}
+              <span><strong>${escapeHtml(formatDisplayName(req.sender.display_name))}</strong> wants to be friends</span>
+            </div>
           <div class="run-item-action">
             <button class="btn btn-primary btn-sm accept-req-btn" data-id="${req.friendshipId}">Accept</button>
             <button class="btn btn-ghost btn-sm decline-req-btn" data-id="${req.friendshipId}">Decline</button>
@@ -1026,10 +1113,10 @@ function renderFriendsView(friends, incoming, outgoing) {
     outList.innerHTML = outgoing
       .map((req) => `
         <li class="run-item">
-          <div class="user-profile">
-            ${avatarImg(req.receiver.avatar_url)}
-            <span>Pending response from <strong>${escapeHtml(req.receiver.display_name)}</strong></span>
-          </div>
+            <div class="user-profile">
+              ${avatarImg(req.receiver.avatar_url)}
+              <span>Pending response from <strong>${escapeHtml(formatDisplayName(req.receiver.display_name))}</strong></span>
+            </div>
           <div class="run-item-action">
             <button class="btn btn-ghost btn-sm cancel-req-btn" data-id="${req.friendshipId}">Cancel</button>
           </div>
@@ -1147,7 +1234,12 @@ async function importFile(file) {
   const msg = $('#import-msg');
   msg.textContent = `Reading ${file.name}…`;
   try {
-    const { distanceKm, durationMin, dateISO } = await parseActivityFile(file);
+    let { distanceKm, durationMin, dateISO } = await parseActivityFile(file);
+    let capped = false;
+    if (distanceKm >= 100) {
+      distanceKm = 99.99;
+      capped = true;
+    }
     if (distanceKm > 0) $('#f-distance').value = distanceKm;
     if (durationMin != null) $('#f-duration').value = durationMin;
     if (dateISO) $('#f-date').value = dateISO;
@@ -1155,8 +1247,11 @@ async function importFile(file) {
     const bits = [];
     if (distanceKm > 0) bits.push(`${distanceKm} km`);
     if (durationMin != null) bits.push(`${durationMin} min`);
+    
+    let info = bits.join(' · ');
+    if (capped) info += ' (capped at 99.99 km)';
     msg.textContent = bits.length
-      ? `Imported ${bits.join(' · ')} · review and press Add run.`
+      ? `Imported ${info} · review and press Add run.`
       : 'File read, but no distance found. Enter it manually.';
   } catch (err) {
     msg.textContent = err.message;
@@ -1171,7 +1266,7 @@ async function onAddRun(e) {
   const durationRaw = $('#f-duration').value.trim();
   const notes = $('#f-notes').value.trim();
 
-  if (!(distance > 0)) { msg.textContent = 'Enter a distance greater than 0.'; return; }
+  if (!(distance > 0 && distance < 100)) { msg.textContent = 'Enter a distance between 0.01 and 99.99 km.'; return; }
   if (!date) { msg.textContent = 'Pick a date.'; return; }
   if (durationRaw && !(Number(durationRaw) > 0)) {
     msg.textContent = 'Duration must be greater than 0, or leave it blank.';
@@ -1300,6 +1395,22 @@ function escapeHtml(s) {
   ));
 }
 
+function formatDisplayName(name) {
+  if (!name) return 'Anonymous';
+  const trimmed = name.trim();
+  if (trimmed.length > 15) {
+    const spaceIndex = trimmed.indexOf(' ');
+    if (spaceIndex !== -1) {
+      const firstName = trimmed.substring(0, spaceIndex);
+      const surname = trimmed.substring(spaceIndex + 1).trim();
+      if (surname.length > 0) {
+        return `${firstName} ${surname[0].toUpperCase()}.`;
+      }
+    }
+  }
+  return trimmed;
+}
+
 // Sanitize a user-supplied avatar URL before it goes into an <img src> template.
 // Only http(s) URLs pass; anything else (javascript:, attribute-breakout
 // payloads, etc.) becomes empty so the <img> is simply omitted. Callers must
@@ -1356,4 +1467,491 @@ function maybeImportShared() {
   importFile(file);
   // Show the log modal since we have a shared file to import!
   $('#run-log-modal').hidden = false;
+}
+
+// ---------------------------------------------------------------------------
+//  Clubs Feature Operations
+// ---------------------------------------------------------------------------
+async function loadClubs() {
+  if (!me) return;
+  try {
+    clubs = await fetchClubs();
+
+    if (clubs.length === 0) {
+      activeClubId = null;
+      activeClub = null;
+      activeClubMembers = [];
+      activeClubRuns = [];
+      renderClubsView();
+      return;
+    }
+
+    // Populate active selector
+    const selector = $('#club-selector');
+    selector.innerHTML = clubs
+      .map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+      .join('');
+
+    // Select first club if current active is invalid
+    if (!activeClubId || !clubs.some(c => c.id === activeClubId)) {
+      activeClubId = clubs[0].id;
+    }
+    selector.value = activeClubId;
+
+    // Load active club details
+    activeClub = await fetchClubDetails(activeClubId);
+    activeClubMembers = await fetchClubMembers(activeClubId);
+    activeClubRuns = await fetchClubRuns(activeClubMembers.map(m => m.id));
+
+    renderClubsView();
+  } catch (err) {
+    console.error('Error loading clubs:', err);
+  }
+}
+
+function renderClubsView() {
+  const isEmpty = activeClubId === null;
+  $('#club-empty-state').hidden = !isEmpty;
+  $('#club-active-state').hidden = isEmpty;
+
+  if (isEmpty) return;
+
+  // Render Details
+  const isOwner = activeClub.owner_id === me.id;
+  const ownerProfile = activeClubMembers.find(m => m.id === activeClub.owner_id);
+  $('#club-owner-name').textContent = ownerProfile ? formatDisplayName(ownerProfile.display_name) : 'Unknown';
+
+  const link = window.location.origin + window.location.pathname + '?c=' + activeClub.invite_code;
+  $('#club-invite-link').value = link;
+  $('#club-display-code').textContent = activeClub.invite_code;
+
+  // Manage owner settings card
+  const settingsCard = $('#club-settings-card');
+  if (isOwner) {
+    settingsCard.hidden = false;
+    $('#f-club-settings-name').value = activeClub.name;
+    $('#f-club-settings-pool').checked = activeClub.pool_enabled;
+    $('#f-club-settings-baht').value = activeClub.pool_baht_per_km;
+    $('#f-club-settings-max-loss').value = activeClub.pool_max_loss;
+    $('#club-settings-pool-details').style.display = activeClub.pool_enabled ? 'flex' : 'none';
+  } else {
+    settingsCard.hidden = true;
+  }
+
+  // Render Members
+  const memList = $('#club-members-list');
+  memList.innerHTML = activeClubMembers
+    .map(member => {
+      const isMemberOwner = member.id === activeClub.owner_id;
+      const isSelf = member.id === me.id;
+      
+      let badge = '';
+      if (isMemberOwner) badge += '<span class="owner-chip">Owner</span>';
+      if (isSelf) badge += '<span class="you-chip">You</span>';
+
+      let kickBtn = '';
+      if (isOwner && !isSelf) {
+        kickBtn = `<button class="btn btn-ghost btn-sm kick-member-btn" data-uid="${member.id}" data-name="${escapeHtml(member.display_name)}" style="color: var(--danger); padding: 2px 8px; font-size: 0.75rem;">Kick</button>`;
+      }
+
+      return `
+        <li class="run-item">
+          <div class="run-main" style="justify-content:space-between; width:100%; align-items:center;">
+            <div class="user-profile">
+              ${avatarImg(member.avatar_url, ' style="width:20px; height:20px;"')}
+              <span class="lb-name" style="font-size:0.9rem;">${escapeHtml(formatDisplayName(member.display_name))}</span>
+              ${badge}
+            </div>
+            ${kickBtn}
+          </div>
+        </li>`;
+    })
+    .join('');
+
+  memList.querySelectorAll('.kick-member-btn').forEach(btn => {
+    btn.addEventListener('click', () => onKickMemberClick(btn.dataset.uid, btn.dataset.name));
+  });
+
+  // Render Runs, Leaderboard, Pool
+  renderClubLeaderboard();
+  renderClubRuns();
+}
+
+function renderClubLeaderboard() {
+  const cutoff = rangeCutoff(clubRange);
+  const inRange = activeClubRuns.filter((r) => (cutoff ? r.run_date >= cutoff : true));
+
+  const totals = new Map();
+  // Initialize everyone in the club to 0 km so they appear on the leaderboard
+  for (const m of activeClubMembers) {
+    totals.set(m.id, { name: formatDisplayName(m.display_name || 'Anonymous'), avatar: m.avatar_url || '', km: 0, runs: 0 });
+  }
+
+  for (const r of inRange) {
+    if (totals.has(r.user_id)) {
+      const cur = totals.get(r.user_id);
+      cur.km += Number(r.distance_km);
+      cur.runs += 1;
+    }
+  }
+
+  const ranked = [...totals.entries()]
+    .map(([userId, t]) => ({ userId, ...t }))
+    .sort((a, b) => b.km - a.km);
+
+  const el = $('#club-leaderboard');
+  if (ranked.length === 0) {
+    el.innerHTML = `<li class="empty">No runs in this range yet.</li>`;
+    $('#club-baht-card').hidden = true;
+    return;
+  }
+
+  el.innerHTML = ranked
+    .map((row, i) => `
+      <li class="lb-row${row.userId === me.id ? ' is-me' : ''}">
+        <span class="lb-rank">${i + 1}</span>
+        <div class="user-profile">
+          ${avatarImg(row.avatar, ' style="width:24px; height:24px;"')}
+          <span class="lb-name">${escapeHtml(row.name)}</span>
+        </div>
+        <span class="lb-runs">${row.runs} run${row.runs === 1 ? '' : 's'}</span>
+        <span class="lb-km">${fmtKm(row.km)}</span>
+      </li>`)
+    .join('');
+
+  // Handle Baht Challenge
+  const bahtCard = $('#club-baht-card');
+  if (activeClub.pool_enabled && ranked.length > 1) {
+    bahtCard.hidden = false;
+    renderClubBahtChallenge(ranked);
+  } else {
+    bahtCard.hidden = true;
+  }
+}
+
+function renderClubBahtChallenge(ranked) {
+  const bahtList = $('#club-baht-list');
+  if (!bahtList) return;
+
+  const bahtPerKm = Number(activeClub.pool_baht_per_km);
+  const maxLoss = Number(activeClub.pool_max_loss);
+
+  // 1. Calculate raw diff for each runner comparing to average of others
+  const runnersCalculated = ranked.map((row) => {
+    const otherRunners = ranked.filter((r) => r.userId !== row.userId);
+    const otherSum = sum(otherRunners.map(r => r.km));
+    const otherAvg = otherSum / otherRunners.length;
+    const diff = row.km - otherAvg;
+    const rawLoss = diff < 0 ? -diff * bahtPerKm : 0;
+    const loss = Math.min(rawLoss, maxLoss);
+    return {
+      ...row,
+      diff,
+      loss
+    };
+  });
+
+  const totalLossPool = sum(runnersCalculated.map(r => r.loss));
+  const winners = runnersCalculated.filter(r => r.diff > 0);
+  const totalWinnerDiffs = sum(winners.map(r => r.diff));
+
+  // 2. Distribute total loss to winners proportionally
+  const challengeRows = runnersCalculated.map((row) => {
+    let amount = 0;
+    let type = 'neutral'; // gain | lose | neutral
+
+    if (row.diff < 0) {
+      amount = row.loss;
+      type = 'lose';
+    } else if (row.diff > 0 && totalWinnerDiffs > 0) {
+      amount = totalLossPool * (row.diff / totalWinnerDiffs);
+      type = 'gain';
+    }
+
+    return {
+      ...row,
+      amount,
+      type
+    };
+  });
+
+  // 3. Render challenge rows
+  bahtList.innerHTML = challengeRows
+    .map((row) => {
+      let text = '';
+      let badgeClass = '';
+      if (row.type === 'gain') {
+        text = `gain ${row.amount.toFixed(2)} baht`;
+        badgeClass = 'baht-gain';
+      } else if (row.type === 'lose') {
+        text = `lose ${row.amount.toFixed(2)} baht`;
+        badgeClass = 'baht-lose';
+      } else {
+        text = `gain 0.00 baht`;
+        badgeClass = 'baht-neutral';
+      }
+
+      const isMe = row.userId === me.id;
+
+      return `
+        <li class="lb-row${isMe ? ' is-me' : ''}" style="grid-template-columns: auto 1fr auto;">
+          <div class="user-profile">
+            ${avatarImg(row.avatar, ' style="width:20px; height:20px;"')}
+            <span class="lb-name" style="font-size:0.9rem;">${escapeHtml(row.name)}</span>
+            ${isMe ? '<span class="you-chip">You</span>' : ''}
+          </div>
+          <span></span>
+          <span class="baht-badge ${badgeClass}">
+            ${text}
+          </span>
+        </li>`;
+    })
+    .join('');
+}
+
+function renderClubRuns() {
+  const el = $('#club-run-list');
+  if (activeClubRuns.length === 0) {
+    el.innerHTML = `<li class="empty">No runs logged yet by club members.</li>`;
+    return;
+  }
+
+  el.innerHTML = activeClubRuns
+    .map((r) => {
+      const pace = paceLabel(r.distance_km, r.duration_min);
+      const isMine = r.user_id === me.id;
+      const runnerName = formatDisplayName(r.profiles?.display_name || 'Anonymous');
+      const avatar = r.profiles?.avatar_url || '';
+
+      return `
+        <li class="run-item">
+          <div class="run-main">
+            <span class="run-km">${fmtKm(r.distance_km)}</span>
+            <div class="user-profile" style="display:inline-flex;">
+              ${avatarImg(avatar, ' style="width:18px; height:18px; border:1px solid var(--brand)"')}
+              <span class="run-runner">${escapeHtml(runnerName)}</span>
+            </div>
+            ${pace ? `<span class="run-pace">${pace}</span>` : ''}
+          </div>
+          <div class="run-meta">
+            <span>${fmtDate(r.run_date)}</span>
+            ${r.duration_min ? `<span>${fmtDuration(r.duration_min)}</span>` : ''}
+            ${r.notes ? `<span class="run-notes">${escapeHtml(r.notes)}</span>` : ''}
+          </div>
+          ${isMine ? `<button class="run-del" data-id="${r.id}" title="Delete this run" aria-label="Delete run">✕</button>` : ''}
+        </li>`;
+    })
+    .join('');
+
+  el.querySelectorAll('.run-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (confirm('Delete this run?')) {
+        try {
+          await deleteRun(btn.dataset.id);
+          // Reload everything to sync
+          await Promise.all([loadRuns(), loadClubs()]);
+        } catch (err) {
+          alert('Delete failed: ' + err.message);
+        }
+      }
+    });
+  });
+}
+
+async function onClubCreateSubmit(e) {
+  e.preventDefault();
+  const nameField = $('#f-club-create-name');
+  const poolCheck = $('#f-club-create-pool').checked;
+  const bahtField = $('#f-club-create-baht');
+  const maxLossField = $('#f-club-create-max-loss');
+  const msg = $('#club-create-msg');
+
+  const name = nameField.value.trim();
+  if (name.length < 2) {
+    msg.textContent = 'Name must be at least 2 characters.';
+    return;
+  }
+
+  msg.textContent = 'Creating...';
+  try {
+    const club = await createClub(
+      name,
+      poolCheck,
+      poolCheck ? Number(bahtField.value) : 10,
+      poolCheck ? Number(maxLossField.value) : 200
+    );
+    nameField.value = '';
+    activeClubId = club.id;
+    await loadClubs();
+    msg.textContent = '';
+  } catch (err) {
+    msg.textContent = 'Error: ' + err.message;
+  }
+}
+
+async function onClubJoinSubmit(e) {
+  e.preventDefault();
+  const field = $('#f-club-join-code');
+  const msg = $('#club-join-msg');
+  const code = field.value.trim();
+
+  if (!code) return;
+
+  msg.textContent = 'Joining...';
+  try {
+    const club = await joinClub(code);
+    field.value = '';
+    activeClubId = club.id;
+    await loadClubs();
+    msg.textContent = '';
+  } catch (err) {
+    msg.textContent = 'Error: ' + err.message;
+  }
+}
+
+async function onClubSettingsSubmit(e) {
+  e.preventDefault();
+  const name = $('#f-club-settings-name').value.trim();
+  const pool = $('#f-club-settings-pool').checked;
+  const baht = $('#f-club-settings-baht').value;
+  const maxLoss = $('#f-club-settings-max-loss').value;
+  const msg = $('#club-settings-msg');
+
+  if (name.length < 2) {
+    msg.textContent = 'Name must be at least 2 characters.';
+    return;
+  }
+
+  msg.textContent = 'Saving...';
+  try {
+    await updateClubSettings(activeClubId, {
+      name,
+      pool_enabled: pool,
+      pool_baht_per_km: pool ? Number(baht) : 10,
+      pool_max_loss: pool ? Number(maxLoss) : 200
+    });
+    msg.textContent = 'Settings saved!';
+    msg.style.color = '#22c55e';
+    await loadClubs();
+    setTimeout(() => { msg.textContent = ''; msg.style.color = 'var(--muted)'; }, 3000);
+  } catch (err) {
+    msg.textContent = 'Error: ' + err.message;
+    msg.style.color = 'var(--danger)';
+  }
+}
+
+async function onLeaveClubClick() {
+  if (!confirm('Are you sure you want to leave this club?')) return;
+  try {
+    await leaveClub(activeClubId);
+    activeClubId = null;
+    await loadClubs();
+  } catch (err) {
+    alert('Error leaving club: ' + err.message);
+  }
+}
+
+async function onDeleteClubClick() {
+  if (!confirm('CRITICAL: Are you sure you want to delete this club? This will permanently remove all memberships. This cannot be undone!')) return;
+  try {
+    await deleteClub(activeClubId);
+    activeClubId = null;
+    await loadClubs();
+  } catch (err) {
+    alert('Error deleting club: ' + err.message);
+  }
+}
+
+async function onKickMemberClick(userId, name) {
+  if (!confirm(`Are you sure you want to kick "${name}" from this club?`)) return;
+  try {
+    await leaveClub(activeClubId, userId);
+    await loadClubs();
+  } catch (err) {
+    alert('Error kicking member: ' + err.message);
+  }
+}
+
+function copyClubLink() {
+  const linkEl = $('#club-invite-link');
+  linkEl.select();
+  linkEl.setSelectionRange(0, 99999);
+  try {
+    navigator.clipboard.writeText(linkEl.value);
+  } catch (_) {
+    document.execCommand && document.execCommand('copy');
+  }
+
+  const btn = $('#btn-copy-club-link');
+  const origText = btn.textContent;
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = origText; }, 2000);
+}
+
+// ---------------------------------------------------------------------------
+//  Club URL Invites Handling
+// ---------------------------------------------------------------------------
+async function handlePendingClubAction() {
+  if (!pendingClubAction) return;
+
+  const modal = $('#club-invite-modal');
+  const title = $('#club-invite-title');
+  const desc = $('#club-invite-desc');
+  const err = $('#club-invite-error');
+
+  err.hidden = true;
+  modal.hidden = false;
+
+  try {
+    title.textContent = 'Join Club';
+    desc.textContent = 'Resolving club code...';
+
+    // Retrieve basic details
+    const code = String(pendingClubAction.code).trim().toUpperCase();
+    const { data: club, error: findErr } = await supabase
+      .from('clubs')
+      .select('id, name')
+      .eq('invite_code', code)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!club) {
+      throw new Error('That club invite link is invalid or has expired.');
+    }
+
+    pendingClubAction.id = club.id;
+    desc.textContent = `Would you like to join the club "${club.name}"?`;
+  } catch (e) {
+    desc.textContent = 'Oops! Something went wrong.';
+    err.textContent = e.message;
+    err.hidden = false;
+    $('#btn-club-invite-accept').disabled = true;
+  }
+}
+
+async function acceptPendingClubAction() {
+  const err = $('#club-invite-error');
+  const btn = $('#btn-club-invite-accept');
+  btn.disabled = true;
+  err.hidden = true;
+
+  try {
+    await joinClub(pendingClubAction.code);
+    alert('Joined successfully!');
+    activeClubId = pendingClubAction.id;
+    await loadClubs();
+    closeClubInviteModal();
+    switchTab('clubs');
+  } catch (e) {
+    err.textContent = e.message;
+    err.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function closeClubInviteModal() {
+  $('#club-invite-modal').hidden = true;
+  $('#btn-club-invite-accept').disabled = false;
+  pendingClubAction = null;
 }

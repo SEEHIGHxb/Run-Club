@@ -8,18 +8,70 @@
 //  working normally.
 // ============================================================================
 
+const CACHE_NAME = 'runaway-assets-v1';
 const SHARE_CACHE = 'runclub-shared';
 
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+const ASSETS_TO_CACHE = [
+  './',
+  './index.html',
+  './index.css',
+  './app.js',
+  './db.js',
+  './parse.js',
+  './config.js',
+  './manifest.json',
+  './icons/runorlose.png'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME && key !== SHARE_CACHE) {
+            return caches.delete(key);
+          }
+        })
+      );
+    }).then(() => self.clients.claim())
+  );
+});
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  // Intercept ONLY the share-target POST. Everything else falls through to the
-  // network (we don't call respondWith), so normal loading is untouched.
+
+  // Intercept the share-target POST
   if (event.request.method === 'POST' && url.pathname.endsWith('/share-target')) {
     event.respondWith(handleShare(event.request));
+    return;
   }
+
+  // Only handle GET requests for caching
+  if (event.request.method !== 'GET') return;
+
+  // Network-First strategy for local/fonts assets, falling back to cache
+  event.respondWith(
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse.status === 200 && (url.origin === self.location.origin || url.host === 'fonts.googleapis.com' || url.host === 'fonts.gstatic.com')) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(event.request);
+      })
+  );
 });
 
 async function handleShare(request) {

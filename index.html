@@ -77,6 +77,7 @@
     <!-- Navigation Tabs -->
     <nav class="app-nav">
       <button class="nav-btn active" data-tab="runs">Runs</button>
+      <button class="nav-btn" data-tab="clubs">Clubs</button>
       <button class="nav-btn" data-tab="friends">Friends<span id="friends-badge" class="nav-badge" hidden></span></button>
     </nav>
 
@@ -94,12 +95,6 @@
             </div>
           </div>
           <ol id="leaderboard" class="leaderboard"></ol>
-
-          <!-- Baht Pool Challenge Section -->
-          <div class="baht-challenge-section" style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 15px;">
-            <h3 style="margin-bottom: 10px;">Run or Lose Pool</h3>
-            <ul id="baht-challenge-list" class="leaderboard"></ul>
-          </div>
         </section>
 
         <!-- Recent runs -->
@@ -164,6 +159,167 @@
           </form>
         </div>
       </section>
+    </div>
+
+    <!-- ===================== Panel: Clubs ===================== -->
+    <div id="panel-clubs" class="tab-panel" hidden>
+      <!-- State A: Not joined any clubs -->
+      <div id="club-empty-state">
+        <div class="grid-2">
+          <!-- Create Club -->
+          <section class="card">
+            <h2>Create a Club</h2>
+            <form id="club-create-form" class="run-form">
+              <label class="field field-wide">
+                <span>Club Name</span>
+                <input id="f-club-create-name" type="text" required placeholder="e.g. Speedsters" maxlength="50">
+              </label>
+              
+              <label class="mine-toggle field-wide">
+                <input type="checkbox" id="f-club-create-pool" checked> Enable "Run or Lose" Baht Pool
+              </label>
+
+              <div id="club-create-pool-details" class="field-wide" style="display: flex; gap: 12px;">
+                <label class="field" style="flex: 1;">
+                  <span>Baht / km</span>
+                  <input id="f-club-create-baht" type="number" step="0.5" min="0" value="10">
+                </label>
+                <label class="field" style="flex: 1;">
+                  <span>Max Loss (Baht)</span>
+                  <input id="f-club-create-max-loss" type="number" step="10" min="0" value="200">
+                </label>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Create Club</button>
+                <span id="club-create-msg" class="run-msg"></span>
+              </div>
+            </form>
+          </section>
+
+          <!-- Join Club -->
+          <section class="card">
+            <h2>Join a Club</h2>
+            <p class="section-desc">Enter the 6-character Invite Code shared by a club owner:</p>
+            <form id="club-join-form" class="run-form" style="margin-top: 10px;">
+              <label class="field field-wide">
+                <span>Invite Code</span>
+                <input id="f-club-join-code" type="text" required placeholder="e.g. XY12AB" maxlength="10">
+              </label>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Join Club</button>
+                <span id="club-join-msg" class="run-msg"></span>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+
+      <!-- State B: Joined one or more clubs -->
+      <div id="club-active-state" hidden>
+        <!-- Club Selection & Management Header -->
+        <div class="card" style="margin-bottom: 16px;">
+          <div class="card-head" style="width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+              <h2 style="white-space: nowrap;">Active Club:</h2>
+              <select id="club-selector" class="filter-select" style="flex: 1; max-width: 250px; font-weight: 600;"></select>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button id="btn-club-quick-join" class="btn btn-ghost btn-sm">+ Join Club</button>
+              <button id="btn-club-quick-create" class="btn btn-ghost btn-sm">+ Create Club</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <!-- Left Column: Details, Invite, Members, Settings -->
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <!-- Club Info & Invite Code -->
+            <section class="card">
+              <h2>Club Details</h2>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <p class="section-desc">Owner: <strong id="club-owner-name">...</strong></p>
+                <p class="section-desc">Share Invite Link:</p>
+                <div class="copy-box">
+                  <input id="club-invite-link" readonly type="text" value="Loading...">
+                  <button id="btn-copy-club-link" class="btn btn-primary btn-sm">Copy Link</button>
+                </div>
+                <p class="uid-hint">Club Code: <code id="club-display-code">...</code></p>
+              </div>
+              <div style="border-top: 1px solid var(--line); padding-top: 12px; margin-top: 6px;">
+                <button id="btn-leave-club" class="btn btn-ghost btn-sm" style="color: var(--danger);">Leave Club</button>
+              </div>
+            </section>
+
+            <!-- Club Members -->
+            <section class="card">
+              <h2>Members</h2>
+              <ul id="club-members-list" class="run-list"></ul>
+            </section>
+
+            <!-- Club Settings (Owner only) -->
+            <section id="club-settings-card" class="card" hidden>
+              <h2>Club Settings</h2>
+              <form id="club-settings-form" class="run-form">
+                <label class="field field-wide">
+                  <span>Rename Club</span>
+                  <input id="f-club-settings-name" type="text" required maxlength="50">
+                </label>
+
+                <label class="mine-toggle field-wide">
+                  <input type="checkbox" id="f-club-settings-pool"> Enable "Run or Lose" Baht Pool
+                </label>
+
+                <div id="club-settings-pool-details" class="field-wide" style="display: flex; gap: 12px;">
+                  <label class="field" style="flex: 1;">
+                    <span>Baht / km</span>
+                    <input id="f-club-settings-baht" type="number" step="0.5" min="0">
+                  </label>
+                  <label class="field" style="flex: 1;">
+                    <span>Max Loss (Baht)</span>
+                    <input id="f-club-settings-max-loss" type="number" step="10" min="0">
+                  </label>
+                </div>
+
+                <div class="form-actions" style="justify-content: space-between; align-items: center; width: 100%;">
+                  <button type="submit" class="btn btn-primary">Save Settings</button>
+                  <button type="button" id="btn-delete-club" class="btn btn-ghost btn-sm" style="color: var(--danger);">Delete Club</button>
+                </div>
+                <span id="club-settings-msg" class="run-msg field-wide"></span>
+              </form>
+            </section>
+          </div>
+
+          <!-- Right Column: Leaderboard, Pool, Recent Runs -->
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <!-- Club Leaderboard -->
+            <section class="card">
+              <div class="card-head">
+                <h2>Club Leaderboard</h2>
+                <div class="seg" role="tablist" aria-label="Club leaderboard range">
+                  <button class="seg-btn active club-range-btn" data-range="week" role="tab">Week</button>
+                  <button class="seg-btn club-range-btn" data-range="month" role="tab">Month</button>
+                  <button class="seg-btn club-range-btn" data-range="all" role="tab">All</button>
+                </div>
+              </div>
+              <ol id="club-leaderboard" class="leaderboard"></ol>
+            </section>
+
+            <!-- Club "Run or Lose" Pool -->
+            <section id="club-baht-card" class="card" hidden>
+              <h2>Run or Lose Pool</h2>
+              <ul id="club-baht-list" class="leaderboard"></ul>
+            </section>
+
+            <!-- Club Recent Runs -->
+            <section class="card">
+              <h2>Club Recent Runs</h2>
+              <ul id="club-run-list" class="run-list"></ul>
+            </section>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ===================== Panel: Profile ===================== -->
@@ -235,7 +391,7 @@
         </div>
         <label class="field">
           <span>Distance (km)</span>
-          <input id="f-distance" type="number" step="0.01" min="0.01" required>
+          <input id="f-distance" type="number" step="0.01" min="0.01" max="99.99" required>
         </label>
         <label class="field">
           <span>Date</span>
@@ -268,6 +424,19 @@
         <button id="btn-invite-decline" class="btn btn-ghost btn-block">Decline</button>
       </div>
       <p id="invite-error" class="gate-error" role="alert" hidden></p>
+    </div>
+  </div>
+
+  <!-- ===================== Club Invite Modal Overlay ===================== -->
+  <div id="club-invite-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="club-invite-title">Club Invitation</h2>
+      <p id="club-invite-desc">Loading club details...</p>
+      <div class="modal-actions">
+        <button id="btn-club-invite-accept" class="btn btn-primary btn-block">Join Club</button>
+        <button id="btn-club-invite-decline" class="btn btn-ghost btn-block">Decline</button>
+      </div>
+      <p id="club-invite-error" class="gate-error" role="alert" hidden></p>
     </div>
   </div>
 
