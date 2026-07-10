@@ -124,6 +124,18 @@ export async function fetchProfile(profileId) {
   return data;
 }
 
+// Self-heal insert for when the signup trigger didn't create a profile row.
+// RLS only allows inserting your own id.
+export async function createProfile(profile) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .insert(profile)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 // ---------------------------------------------------------------------------
 //  Friends
 // ---------------------------------------------------------------------------
@@ -395,20 +407,24 @@ export async function createClub(name, poolEnabled, bahtPerKm = 10, maxLoss = 20
   return club;
 }
 
+// Resolve a club invite code to its { id, name }, or null when nothing
+// matches. Shared by the join form and the ?c=CODE invite-link modal.
+export async function getClubByCode(code) {
+  const { data, error } = await supabase
+    .from('clubs')
+    .select('id, name')
+    .eq('invite_code', String(code).trim().toUpperCase())
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function joinClub(inviteCode) {
   const { data: { session } } = await supabase.auth.getSession();
   const myId = session?.user?.id;
   if (!myId) throw new Error('Not authenticated');
 
-  const code = String(inviteCode).trim().toUpperCase();
-
-  const { data: club, error: findErr } = await supabase
-    .from('clubs')
-    .select('id, name')
-    .eq('invite_code', code)
-    .maybeSingle();
-
-  if (findErr) throw findErr;
+  const club = await getClubByCode(inviteCode);
   if (!club) throw new Error('No club found with that invite code.');
 
   const { error: joinErr } = await supabase
