@@ -89,9 +89,9 @@
           <div class="card-head">
             <h2>Leaderboard</h2>
             <div class="seg" role="tablist" aria-label="Leaderboard range">
-              <button class="seg-btn active" data-range="week" role="tab">This week</button>
+              <button class="seg-btn active" data-range="all" role="tab">All time</button>
               <button class="seg-btn" data-range="month" role="tab">This month</button>
-              <button class="seg-btn" data-range="all" role="tab">All time</button>
+              <button class="seg-btn" data-range="week" role="tab">This week</button>
             </div>
           </div>
           <ol id="leaderboard" class="leaderboard"></ol>
@@ -176,15 +176,15 @@
               </label>
               
               <label class="mine-toggle field-wide">
-                <input type="checkbox" id="f-club-create-pool" checked> Enable "Run or Lose" Baht Pool
+                <input type="checkbox" id="f-club-create-pool" checked> Enable "Run or Lose"
               </label>
 
-              <div id="club-create-pool-details" class="field-wide" style="display: flex; gap: 12px;">
-                <label class="field" style="flex: 1;">
+              <div id="club-create-pool-details" class="field-wide" style="display: flex; gap: 12px; justify-content: flex-start; align-items: flex-start;">
+                <label class="field" style="width: 100px;">
                   <span>Baht / km</span>
                   <input id="f-club-create-baht" type="number" step="0.5" min="0" value="10">
                 </label>
-                <label class="field" style="flex: 1;">
+                <label class="field" style="width: 140px;">
                   <span>Max Loss (Baht)</span>
                   <input id="f-club-create-max-loss" type="number" step="10" min="0" value="200">
                 </label>
@@ -220,7 +220,7 @@
       <div id="club-active-state" hidden>
         <!-- Club Selection & Management Header -->
         <div class="card" style="margin-bottom: 16px;">
-          <div class="card-head" style="width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+          <div class="card-head" style="width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
             <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
               <h2 style="white-space: nowrap;">Active Club:</h2>
               <select id="club-selector" class="filter-select" style="flex: 1; max-width: 250px; font-weight: 600;"></select>
@@ -268,15 +268,15 @@
                 </label>
 
                 <label class="mine-toggle field-wide">
-                  <input type="checkbox" id="f-club-settings-pool"> Enable "Run or Lose" Baht Pool
+                  <input type="checkbox" id="f-club-settings-pool"> Enable "Run or Lose"
                 </label>
 
-                <div id="club-settings-pool-details" class="field-wide" style="display: flex; gap: 12px;">
-                  <label class="field" style="flex: 1;">
+                <div id="club-settings-pool-details" class="field-wide" style="display: none; gap: 12px; justify-content: flex-start; align-items: flex-start;">
+                  <label class="field" style="width: 100px;">
                     <span>Baht / km</span>
                     <input id="f-club-settings-baht" type="number" step="0.5" min="0">
                   </label>
-                  <label class="field" style="flex: 1;">
+                  <label class="field" style="width: 140px;">
                     <span>Max Loss (Baht)</span>
                     <input id="f-club-settings-max-loss" type="number" step="10" min="0">
                   </label>
@@ -298,18 +298,18 @@
               <div class="card-head">
                 <h2>Club Leaderboard</h2>
                 <div class="seg" role="tablist" aria-label="Club leaderboard range">
-                  <button class="seg-btn active club-range-btn" data-range="week" role="tab">Week</button>
+                  <button class="seg-btn active club-range-btn" data-range="all" role="tab">All</button>
                   <button class="seg-btn club-range-btn" data-range="month" role="tab">Month</button>
-                  <button class="seg-btn club-range-btn" data-range="all" role="tab">All</button>
+                  <button class="seg-btn club-range-btn" data-range="week" role="tab">Week</button>
                 </div>
               </div>
               <ol id="club-leaderboard" class="leaderboard"></ol>
-            </section>
 
-            <!-- Club "Run or Lose" Pool -->
-            <section id="club-baht-card" class="card" hidden>
-              <h2>Run or Lose Pool</h2>
-              <ul id="club-baht-list" class="leaderboard"></ul>
+              <!-- Club "Run or Lose" Pool (shown below leaderboard in same card) -->
+              <div id="club-baht-section" style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 15px;" hidden>
+                <h3 style="margin-bottom: 10px;">Run or Lose Pool</h3>
+                <ul id="club-baht-list" class="leaderboard"></ul>
+              </div>
             </section>
 
             <!-- Club Recent Runs -->
@@ -369,10 +369,7 @@
       <span>+ Run</span>
     </button>
 
-    <footer class="app-footer">
-      <span id="live-dot" class="live-dot"></span>
-      <span id="conn-note"></span>
-    </footer>
+    <!-- removed footer -->
   </div>
 
   <!-- ===================== Modal: Log a Run ===================== -->

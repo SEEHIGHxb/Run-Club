@@ -46,7 +46,7 @@ let runs = [];                  // runs cache
 let poolRoster = [];            // everyone eligible for the Run-or-Lose pool
                                 // (friends + me), so non-runners are counted at
                                 // 0 km.
-let range = 'week';             // week | month | all
+let range = 'all';             // week | month | all
 let onlyMine = false;
 let unsubscribe = null;         // runs realtime teardown
 let unsubscribeFriends = null;  // friends realtime teardown
@@ -63,7 +63,7 @@ let activeClubId = null;        // active club ID
 let activeClub = null;          // active club details
 let activeClubMembers = [];     // members of the active club
 let activeClubRuns = [];        // runs of active club members
-let clubRange = 'week';         // week | month | all
+let clubRange = 'all';         // week | month | all
 let unsubscribeClubs = null;    // clubs realtime teardown
 let pendingClubAction = null;   // club invite link action from a URL (?c=INVITE_CODE)
 
@@ -808,10 +808,10 @@ async function loadRuns() {
     renderAll();
   } catch (err) {
     setLive(false);
-    $('#conn-note').textContent = 'Could not fetch runs: ' + err.message;
+    const connNote = $('#conn-note');
+    if (connNote) connNote.textContent = 'Could not fetch runs: ' + err.message;
   }
 }
-
 // The set of people who should be in the Run-or-Lose pool: me plus my accepted
 // friends. Anyone here who hasn't logged a run counts as 0 km — that's the point
 // of the challenge. Returns [{ userId, name, avatar }].
@@ -1598,11 +1598,10 @@ function renderClubLeaderboard() {
   const ranked = [...totals.entries()]
     .map(([userId, t]) => ({ userId, ...t }))
     .sort((a, b) => b.km - a.km);
-
   const el = $('#club-leaderboard');
   if (ranked.length === 0) {
     el.innerHTML = `<li class="empty">No runs in this range yet.</li>`;
-    $('#club-baht-card').hidden = true;
+    $('#club-baht-section').hidden = true;
     return;
   }
 
@@ -1620,12 +1619,12 @@ function renderClubLeaderboard() {
     .join('');
 
   // Handle Baht Challenge
-  const bahtCard = $('#club-baht-card');
+  const bahtSection = $('#club-baht-section');
   if (activeClub.pool_enabled && ranked.length > 1) {
-    bahtCard.hidden = false;
+    bahtSection.hidden = false;
     renderClubBahtChallenge(ranked);
   } else {
-    bahtCard.hidden = true;
+    bahtSection.hidden = true;
   }
 }
 
