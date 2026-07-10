@@ -161,16 +161,11 @@ function init() {
     onlyMine = e.target.checked;
     renderRuns();
   });
-
-  document.querySelectorAll('.seg-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      // Ignore click if it's on the clubs range selector
-      if (btn.classList.contains('club-range-btn')) return;
+  document.querySelectorAll('#panel-runs .seg[aria-label="Leaderboard range"] .seg-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
       range = btn.dataset.range;
-      document.querySelectorAll('.seg-btn').forEach((b) => {
-        if (!b.classList.contains('club-range-btn')) {
-          b.classList.toggle('active', b === btn);
-        }
+      document.querySelectorAll('#panel-runs .seg[aria-label="Leaderboard range"] .seg-btn').forEach((b) => {
+        b.classList.toggle('active', b === btn);
       });
       renderLeaderboard();
     });
@@ -1464,15 +1459,15 @@ async function loadClubs() {
   try {
     clubs = await fetchClubs();
 
-    if (clubs.length === 0) {
+    if (activeClubId === null || clubs.length === 0) {
       activeClubId = null;
       activeClub = null;
       activeClubMembers = [];
       activeClubRuns = [];
       renderClubsView();
+      renderLeaderboard();
       return;
     }
-
     // Populate active selector
     const selector = $('#club-selector');
     selector.innerHTML = clubs
