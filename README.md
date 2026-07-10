@@ -19,8 +19,8 @@ Log your runs · distance, date, duration, notes · and everyone sees a shared, 
 ### 2. Create the tables
 1. In the project, open **SQL Editor** · **New query**.
 2. Copy the entire contents of `schema.sql`, paste, and click **Run**.
-   * This creates the required tables, sets access policies, turns on realtime, and creates the `avatars` storage bucket used for custom profile pictures.
-   * Re-run the whole file any time you pull schema changes (note: it drops and recreates the tables, so it also clears existing data).
+   * This creates all required tables (profiles, friends, runs, clubs, club memberships), sets access policies, turns on realtime, and creates the `avatars` storage bucket used for custom profile pictures.
+   * **Warning:** the file drops and recreates every table, so re-running it wipes ALL existing data — profiles, runs, friendships, clubs, and memberships. Only re-run it on a fresh project or when you accept losing the data. For incremental changes to a live database, run just the new statements instead.
 
 ### 3. Setup Google OAuth in Google Cloud Console
 1. Go to the [Google Cloud Console Credentials Page](https://console.cloud.google.com/apis/credentials).
@@ -60,8 +60,9 @@ export const SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';
 *   Everyone opens the same URL, signs in with Google, and their display name and profile picture are automatically synchronized.
 *   Adding a run inserts a row into the Supabase `runs` table.
 *   The **leaderboard** ranks total km per person for the selected range (week / month / all time).
-*   The **Run or Lose Pool** automatically calculates zero-sum payouts:
-    *   For each runner, calculate their distance difference from the average of all other runners.
-    *   If below average, they lose 10 Baht per km difference.
-    *   If above average, they split the total lost pool equally.
+*   **Clubs** let you group runners with a shareable 6-character invite code; each club has its own leaderboard and optional money pool.
+*   The **Run or Lose Pool** automatically calculates zero-sum payouts per club:
+    *   For each runner, calculate their distance difference from the average of all *other* runners in the club.
+    *   If below average, they lose the club's configured Baht-per-km rate on the shortfall, capped at the club's max loss.
+    *   If above average, they receive a share of the total lost pool, proportional to how far above average they ran.
 *   You can delete your own runs.

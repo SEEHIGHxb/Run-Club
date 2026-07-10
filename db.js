@@ -253,10 +253,10 @@ async function deleteOldAvatar(url) {
   const prefix = `${SUPABASE_URL}/storage/v1/object/public/avatars/`;
   if (url.startsWith(prefix)) {
     const path = url.substring(prefix.length);
-    await supabase.storage
-      .from('avatars')
-      .remove([path])
-      .catch((err) => console.error('Failed to delete old avatar:', err));
+    // Best-effort cleanup: storage.remove() resolves with { error } rather
+    // than rejecting, so a .catch() here would never fire.
+    const { error } = await supabase.storage.from('avatars').remove([path]);
+    if (error) console.error('Failed to delete old avatar:', error);
   }
 }
 
@@ -433,13 +433,19 @@ export async function leaveClub(clubId, userId = null) {
 
   const targetUserId = userId || myId;
 
-  const { error } = await supabase
+  // .select() returns the deleted rows — without it, a delete that matched
+  // nothing (RLS-blocked kick, member already gone) reports success.
+  const { data, error } = await supabase
     .from('club_members')
     .delete()
     .eq('club_id', clubId)
-    .eq('user_id', targetUserId);
+    .eq('user_id', targetUserId)
+    .select();
 
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error('No membership was removed — the member may have already left, or you may not have permission.');
+  }
 }
 
 export async function deleteClub(clubId) {

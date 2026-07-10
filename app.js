@@ -473,6 +473,10 @@ function closeInviteModal() {
 function resetLeaderboardFilters() {
   lbType = 'all';
   range = 'all';
+  onlyMine = false;
+
+  const onlyMineEl = $('#only-mine');
+  if (onlyMineEl) onlyMineEl.checked = false;
 
   const btnAll = $('#btn-lb-type-all');
   const btnClub = $('#btn-lb-type-club');

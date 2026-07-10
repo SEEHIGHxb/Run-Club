@@ -1,32 +1,22 @@
 // ============================================================================
 //  Runaway · Service Worker
-//  Sole job: receive activity files shared from other apps via the Android
-//  share sheet ("Share · Runaway"). Garmin Connect / Strava / a file manager
-//  POST the file here; we stash it in a cache and redirect the page to
-//  ./?share-target=1, where app.js picks it up and imports it automatically.
-//  No asset caching is done, so the ?v= cache-busting in index.html keeps
-//  working normally.
+//  Two jobs:
+//  1. Receive activity files shared from other apps via the Android share
+//     sheet ("Share · Runaway"). Garmin Connect / Strava / a file manager
+//     POST the file here; we stash it in a cache and redirect the page to
+//     ./?share-target=1, where app.js picks it up and imports it automatically.
+//  2. Network-first runtime caching of same-origin assets and Google Fonts,
+//     used only as an offline fallback. Network-first means the ?v= cache-
+//     busting in index.html keeps working normally — fresh code always wins
+//     when online. There is deliberately no install-time precache: the page
+//     requests versioned URLs (./app.js?v=N), so precached unversioned URLs
+//     would never match and just waste storage.
 // ============================================================================
 
-const CACHE_NAME = 'runaway-assets-v1';
+const CACHE_NAME = 'runaway-assets-v2';
 const SHARE_CACHE = 'runclub-shared';
 
-const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  './index.css',
-  './app.js',
-  './db.js',
-  './parse.js',
-  './config.js',
-  './manifest.json',
-  './icons/runorlose.png'
-];
-
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
-  );
   self.skipWaiting();
 });
 
@@ -69,7 +59,9 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       })
       .catch(() => {
-        return caches.match(event.request);
+        // Offline fallback. ignoreSearch lets a request for ./app.js?v=10
+        // fall back to a cached ./app.js?v=9 — stale beats nothing offline.
+        return caches.match(event.request, { ignoreSearch: true });
       })
   );
 });
