@@ -27,6 +27,7 @@ import {
   lbRowsHtml,
   runItemHtml,
   bindRunDeleteButtons,
+  bindRunShareButtons,
 } from './leaderboard.js';
 
 // ---- Clubs state (private to this module) -----------------------------------
@@ -83,6 +84,14 @@ export function initClubs(injected) {
 
   $('#btn-club-invite-accept').addEventListener('click', acceptPendingClubAction);
   $('#btn-club-invite-decline').addEventListener('click', closeClubInviteModal);
+
+  // Hook up club leaderboard sharing
+  $('#btn-share-club-board-tab').addEventListener('click', () => {
+    if (state.activeClub && deps.onShareLeaderboard) {
+      const ranked = computeRankedTotals(state.activeClubRuns, rangeCutoff(clubRange), state.activeClubMembers);
+      deps.onShareLeaderboard(state.activeClub.name, clubRange, ranked);
+    }
+  });
 }
 
 export function setPendingClubAction(action) {
@@ -250,6 +259,12 @@ function renderClubRuns() {
   // Reload everything to sync after a delete
   bindRunDeleteButtons(el, async () => {
     await Promise.all([deps.reloadRuns(), loadClubs()]);
+  });
+  bindRunShareButtons(el, (runId) => {
+    const run = state.activeClubRuns.find(r => r.id === runId);
+    if (run && deps.onShareRun) {
+      deps.onShareRun(run);
+    }
   });
 }
 

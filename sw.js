@@ -85,3 +85,58 @@ async function handleShare(request) {
   const target = new URL('./?share-target=1', self.registration.scope);
   return Response.redirect(target.href, 303);
 }
+
+// ---------------------------------------------------------------------------
+//  Push Notifications
+// ---------------------------------------------------------------------------
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  try {
+    const payload = event.data.json();
+    const title = payload.title || 'Runaway';
+    const options = {
+      body: payload.body || 'Something happened!',
+      icon: './icons/runorlose.png',
+      badge: './icons/runorlose.png',
+      vibrate: [100, 50, 100],
+      data: {
+        url: payload.url || './'
+      }
+    };
+
+    event.waitUntil(self.registration.showNotification(title, options));
+  } catch (err) {
+    console.error('Failed to parse push notification payload:', err);
+    const text = event.data.text();
+    event.waitUntil(
+      self.registration.showNotification('Runaway', {
+        body: text,
+        icon: './icons/runorlose.png',
+        badge: './icons/runorlose.png',
+        data: { url: './' }
+      })
+    );
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const targetUrl = new URL(event.notification.data?.url || './', self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        const clientUrl = new URL(client.url, self.location.origin).href;
+        if (clientUrl === targetUrl && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
+

@@ -27,6 +27,8 @@ import { state } from './state.js';
 import { $, todayISO, formatDisplayName } from './util.js';
 import { initThemeSwitch } from './theme.js';
 import { initAvatarCropper } from './cropper.js';
+import { initNotifications } from './notifications.js';
+import { initShare, openShareRun, openShareLeaderboard } from './share.js';
 import {
   initLeaderboard,
   resetLeaderboardFilters,
@@ -46,6 +48,7 @@ import {
   setPendingClubAction,
   handlePendingClubAction,
 } from './clubs.js';
+
 
 // ---- App-level state ---------------------------------------------------------
 let unsubscribe = null;         // runs realtime teardown
@@ -67,6 +70,9 @@ function init() {
 
   // Initialize Draggable Theme Switch
   initThemeSwitch();
+
+  // Initialize Push Notifications Switch
+  initNotifications();
 
   // Consume any watch activity shared from Android PWA targets
   consumeSharedFile().then((f) => {
@@ -153,9 +159,20 @@ function init() {
   $('#profile-form').addEventListener('submit', onProfileSubmit);
 
   // Feature modules (deps injected to keep the import graph acyclic)
-  initLeaderboard({ switchTab, reloadRuns: loadRuns });
+  initShare();
+  initLeaderboard({
+    switchTab,
+    reloadRuns: loadRuns,
+    onShareRun: openShareRun,
+    onShareLeaderboard: openShareLeaderboard,
+  });
   initFriends();
-  initClubs({ switchTab, reloadRuns: loadRuns });
+  initClubs({
+    switchTab,
+    reloadRuns: loadRuns,
+    onShareRun: openShareRun,
+    onShareLeaderboard: openShareLeaderboard,
+  });
 }
 
 // ---------------------------------------------------------------------------

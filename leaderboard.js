@@ -132,6 +132,7 @@ export function runItemHtml(r) {
   const isMine = r.user_id === state.me.id;
   const runnerName = formatDisplayName(r.profiles?.display_name || 'Anonymous');
   const avatar = r.profiles?.avatar_url || '';
+  const shareRight = isMine ? '36px' : '8px';
 
   return `
     <li class="run-item">
@@ -148,6 +149,9 @@ export function runItemHtml(r) {
         ${r.duration_min ? `<span>${fmtDuration(r.duration_min)}</span>` : ''}
         ${r.notes ? `<span class="run-notes">${escapeHtml(r.notes)}</span>` : ''}
       </div>
+      <button type="button" class="run-share" data-id="${r.id}" style="right:${shareRight}" title="Share this run" aria-label="Share run">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+      </button>
       ${isMine ? `<button class="run-del" data-id="${r.id}" title="Delete this run" aria-label="Delete run">✕</button>` : ''}
     </li>`;
 }
@@ -167,6 +171,16 @@ export function bindRunDeleteButtons(el, afterDelete) {
     });
   });
 }
+
+// Wire up the share buttons
+export function bindRunShareButtons(el, onShare) {
+  el.querySelectorAll('.run-share').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      onShare(btn.dataset.id);
+    });
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 //  Main-page leaderboard
@@ -207,7 +221,19 @@ export function renderLeaderboard() {
     return;
   }
 
-  if (label) label.textContent = `Club: ${state.activeClub.name}`;
+  if (label) {
+    label.innerHTML = `Club: ${escapeHtml(state.activeClub.name)} <button type="button" id="btn-share-club-board" class="btn btn-ghost btn-sm" style="padding: 2px 6px; font-size: 0.75rem; margin-left: 8px;" title="Share Leaderboard">Share</button>`;
+    setTimeout(() => {
+      const shareBtn = $('#btn-share-club-board');
+      if (shareBtn) {
+        shareBtn.addEventListener('click', () => {
+          if (deps.onShareLeaderboard) {
+            deps.onShareLeaderboard(state.activeClub.name, range, ranked);
+          }
+        });
+      }
+    }, 0);
+  }
 
   const ranked = computeRankedTotals(state.activeClubRuns, rangeCutoff(range), state.activeClubMembers);
   if (ranked.length === 0) {
@@ -242,6 +268,12 @@ export function renderRuns() {
 
   el.innerHTML = list.map(runItemHtml).join('');
   bindRunDeleteButtons(el, deps.reloadRuns);
+  bindRunShareButtons(el, (runId) => {
+    const run = list.find(r => r.id === runId);
+    if (run && deps.onShareRun) {
+      deps.onShareRun(run);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

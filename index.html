@@ -313,7 +313,10 @@
             <!-- Club Leaderboard -->
             <section class="card">
               <div class="card-head">
-                <h2>Club Leaderboard</h2>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <h2>Club Leaderboard</h2>
+                  <button type="button" id="btn-share-club-board-tab" class="btn btn-ghost btn-sm" style="padding: 2px 6px; font-size: 0.75rem;" title="Share Leaderboard">Share</button>
+                </div>
                 <div class="seg" role="tablist" aria-label="Club leaderboard range">
                   <button class="seg-btn active club-range-btn" data-range="all" role="tab">All</button>
                   <button class="seg-btn club-range-btn" data-range="month" role="tab">Month</button>
@@ -360,6 +363,18 @@
             <label class="field field-wide">
               <span>Display Name</span>
               <input id="f-display-name" type="text" required maxlength="50">
+            </label>
+
+            <label class="field field-wide" style="flex-direction: row; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px;">
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <span style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Push Notifications</span>
+                <span class="import-hint" style="margin: 0; font-size: 0.75rem;">Notify me when club members log runs.</span>
+              </div>
+              <div id="notify-switch" class="theme-seg" title="Toggle push notifications">
+                <button type="button" class="theme-seg-btn" data-notify-choice="off">Off</button>
+                <button type="button" class="theme-seg-btn" data-notify-choice="on">On</button>
+                <div class="theme-seg-handle"></div>
+              </div>
             </label>
 
             <div class="form-actions">
@@ -473,6 +488,49 @@
       </div>
     </div>
   </div>
+
+  <!-- ===================== Modal: Share Preview ===================== -->
+  <div id="share-modal" class="modal" hidden>
+    <div class="modal-card" style="max-width: 400px; padding: 20px;">
+      <h2>Share Card Preview</h2>
+      
+      <div class="seg" role="tablist" style="margin: 10px auto; display: flex; width: fit-content;">
+        <button type="button" class="seg-btn active" id="btn-share-ratio-story">9:16 Story</button>
+        <button type="button" class="seg-btn" id="btn-share-ratio-post">1:1 Post</button>
+      </div>
+      
+      <!-- Card Theme Selector -->
+      <div class="share-themes" style="display: flex; gap: 8px; justify-content: center; margin-bottom: 12px;">
+        <button type="button" class="theme-dot active" data-theme="sunrise" style="background: linear-gradient(135deg, #ff4e50, #f9d423);" title="Sunrise"></button>
+        <button type="button" class="theme-dot" data-theme="carbon" style="background: linear-gradient(135deg, #232526, #414345);" title="Carbon"></button>
+        <button type="button" class="theme-dot" data-theme="electric" style="background: linear-gradient(135deg, #8a2387, #e94057, #f27121);" title="Electric"></button>
+        <button type="button" class="theme-dot" data-theme="forest" style="background: linear-gradient(135deg, #11998e, #38ef7d);" title="Forest"></button>
+      </div>
+
+      <!-- Preview Frame -->
+      <div class="share-preview-frame">
+        <div id="share-preview-render"></div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="modal-actions" style="margin-top: 12px; gap: 8px;">
+        <button type="button" id="btn-share-ig-story" class="btn btn-primary" style="background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); border: 0; color: #fff; padding: 10px 16px; font-weight: 700;">
+          Share to Instagram Story
+        </button>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <button type="button" id="btn-share-ig-post" class="btn btn-sm">Feed / Post</button>
+          <button type="button" id="btn-share-ig-chat" class="btn btn-sm">Direct Chat</button>
+        </div>
+        <button type="button" id="btn-share-download" class="btn btn-ghost btn-sm" style="border: 1px solid var(--line); font-weight: 600;">
+          Save to Gallery (Download)
+        </button>
+        <button type="button" id="btn-share-close" class="btn btn-ghost btn-sm">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden Off-screen Container for html2canvas rendering at full 1080p -->
+  <div id="share-render-container" style="position: absolute; left: -9999px; top: -9999px; width: 1080px; overflow: hidden; background: #fff;"></div>
 
   <script type="module" src="./app.js?v=10"></script>
 </body>
