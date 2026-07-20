@@ -4,10 +4,18 @@
 //  and connects to the Web Share API and canvas download operations.
 // ============================================================================
 
-import { $, escapeHtml, fmtKm, fmtDuration, paceLabel, fmtDate, avatarImg } from './util.js';
+import { $, escapeHtml, fmtKm, fmtDuration, paceLabel, fmtDate, safeUrl } from './util.js';
 import { state } from './state.js';
 
 let html2canvasModule = null;
+
+// Safe single-letter avatar fallback: escaped so a name starting with `<`/`&`
+// can't corrupt the card markup, and never throws on an empty/whitespace name
+// (a bare `name[0]` on '' is undefined → .toUpperCase() would crash the render).
+function initial(name) {
+  const s = (name || '').trim();
+  return s ? escapeHtml(s[0].toUpperCase()) : '?';
+}
 
 // Dynamic loader for html2canvas to optimize startup performance
 async function getHtml2Canvas() {
@@ -61,11 +69,16 @@ export function initShare() {
     });
   });
 
-  // Share triggers
-  $('#btn-share-ig-story').addEventListener('click', () => triggerShare('story'));
-  $('#btn-share-ig-post').addEventListener('click', () => triggerShare('post'));
-  $('#btn-share-ig-chat').addEventListener('click', () => triggerShare('chat'));
+  // Share triggers. One honest "Share" action: the destination (Instagram
+  // Story / Feed / Direct, WhatsApp, Messages…) is chosen in the OS share sheet,
+  // not here — the web has no API to target a specific Instagram surface.
+  $('#btn-share-native').addEventListener('click', triggerShare);
   $('#btn-share-download').addEventListener('click', triggerDownload);
+
+  // Dismiss when the backdrop (outside the card) is clicked.
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.hidden = true;
+  });
 }
 
 export function openShareRun(run) {
@@ -119,10 +132,12 @@ function buildCardHtml(renderRatio, renderTheme) {
     // Only display top 5 to fit the layout comfortably
     const topRanked = ranked.slice(0, 5);
     const listItems = topRanked.map((row, index) => {
-      // Inline style fallback for avatar images
-      const avatarHtml = row.avatar 
-        ? `<img class="card-leaderboard-avatar" src="${escapeHtml(row.avatar)}" crossorigin="anonymous">`
-        : `<div class="card-leaderboard-avatar" style="background:#cbd5e1; display:flex; align-items:center; justify-content:center; font-size:1.5rem; font-weight:bold; color:#64748b;">${row.name[0].toUpperCase()}</div>`;
+      // Sanitize the avatar URL the same way the rest of the app does (safeUrl),
+      // then escape it for the attribute; fall back to a safe initial otherwise.
+      const safeAvatar = safeUrl(row.avatar);
+      const avatarHtml = safeAvatar
+        ? `<img class="card-leaderboard-avatar" src="${escapeHtml(safeAvatar)}" crossorigin="anonymous">`
+        : `<div class="card-leaderboard-avatar card-avatar-fallback" style="font-size:2.4rem;">${initial(row.name)}</div>`;
 
       return `
         <li class="card-leaderboard-row">
@@ -151,12 +166,12 @@ function buildCardHtml(renderRatio, renderTheme) {
     // Single Run
     const { run } = shareTargetData;
     const runnerName = run.profiles?.display_name || 'Runner';
-    const avatarUrl = run.profiles?.avatar_url || '';
+    const safeAvatar = safeUrl(run.profiles?.avatar_url);
     const pace = paceLabel(run.distance_km, run.duration_min);
-    
-    const avatarHtml = avatarUrl
-      ? `<img class="card-runner-avatar" src="${escapeHtml(avatarUrl)}" crossorigin="anonymous">`
-      : `<div class="card-runner-avatar" style="background:#cbd5e1; display:flex; align-items:center; justify-content:center; font-size:2rem; font-weight:bold; color:#64748b;">${runnerName[0].toUpperCase()}</div>`;
+
+    const avatarHtml = safeAvatar
+      ? `<img class="card-runner-avatar" src="${escapeHtml(safeAvatar)}" crossorigin="anonymous">`
+      : `<div class="card-runner-avatar card-avatar-fallback" style="font-size:3rem;">${initial(runnerName)}</div>`;
 
     const notesHtml = run.notes ? `<div class="card-notes">"${escapeHtml(run.notes)}"</div>` : '';
     const paceRow = pace ? `
@@ -260,12 +275,18 @@ async function generateCardBlob() {
   }
 }
 
-// Execute Native Share or download fallback
-async function triggerShare(igDestination) {
-  const btn = $('#btn-share-ig-' + igDestination) || $('#btn-share-ig-story');
-  const originalText = btn.textContent;
+// Render the card and hand it to the OS share sheet, where the user picks the
+// real destination (Instagram Story / Feed / Direct, WhatsApp, Messages…).
+// There is deliberately no per-destination branching or `instagram://` deep
+// link: a web page can't drop an image straight into a specific Instagram
+// surface, and the old deep links (`instagram://camera` etc.) opened the app
+// without the card. Browsers that can't share files (mostly desktop) get an
+// honest download fallback instead.
+async function triggerShare() {
+  const btn = $('#btn-share-native');
+  const originalHtml = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = 'Generating Image...';
+  btn.textContent = 'Generating image…';
 
   try {
     const blob = await generateCardBlob();
@@ -274,47 +295,32 @@ async function triggerShare(igDestination) {
     const filename = `runaway_${shareTargetData.type}_${Date.now()}.png`;
     const file = new File([blob], filename, { type: 'image/png' });
 
-    // 1. Check if native Web Share is supported and can share files
+    const isLeaderboard = shareTargetData.type === 'leaderboard';
+    const shareTitle = isLeaderboard ? `${shareTargetData.clubName} Leaderboard` : 'My run';
+    const shareText = isLeaderboard
+      ? `Leaderboard for ${shareTargetData.clubName} — via Runaway`
+      : 'Logged on Runaway 🏃';
+
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      let shareTitle = 'My Workout';
-      let shareText = 'Check out this run on Runaway!';
-      
-      if (shareTargetData.type === 'leaderboard') {
-        shareTitle = `${shareTargetData.clubName} Leaderboard`;
-        shareText = `Check out the leaderboard for ${shareTargetData.clubName}!`;
+      try {
+        await navigator.share({ files: [file], title: shareTitle, text: shareText });
+      } catch (err) {
+        // The user closing the share sheet rejects with AbortError — not a real
+        // failure, so don't show an error for it.
+        if (err.name !== 'AbortError') throw err;
       }
-
-      await navigator.share({
-        files: [file],
-        title: shareTitle,
-        text: shareText,
-      });
-      
     } else {
-      // 2. Fallback to download + deep link to Instagram on mobile, or just download on desktop
+      // No native file sharing (typically desktop): save the PNG so the user can
+      // upload it to Instagram themselves.
       triggerDownloadBlob(blob, filename);
-
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      if (isMobile) {
-        let deepLink = 'instagram://';
-        if (igDestination === 'story') {
-          deepLink = 'instagram://camera'; // opens Instagram Camera (users can swipe up to add downloaded card to Stories)
-        } else if (igDestination === 'post') {
-          deepLink = 'instagram://library'; // opens Instagram Library selection (for feed posts)
-        }
-        
-        alert('Image saved to your gallery! Opening Instagram... Select the saved card from your library.');
-        window.location.href = deepLink;
-      } else {
-        alert('Sharing is not supported in this browser. The image has been downloaded to your computer instead.');
-      }
+      alert("This browser can't open a share sheet, so the card was saved as an image. Upload it to Instagram from your gallery.");
     }
   } catch (err) {
     console.error('Share action failed:', err);
-    alert('Failed to share: ' + err.message);
+    alert('Couldn\'t share the card: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = originalText;
+    btn.innerHTML = originalHtml;
   }
 }
 

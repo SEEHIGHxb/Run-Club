@@ -5,7 +5,11 @@
 // ============================================================================
 
 import { VAPID_PUBLIC_KEY } from './config.js';
-import { supabase } from './db.js';
+// Must carry the SAME ?v= query string as every other db.js importer: the
+// browser keys modules by URL, so a bare './db.js' would load a SECOND copy of
+// the module and spin up a duplicate Supabase/GoTrue client on the same storage
+// key (token-refresh races, "Multiple GoTrueClient instances" warning).
+import { supabase } from './db.js?v=4';
 import { $ } from './util.js';
 
 let isNotificationsSupported = false;
@@ -100,7 +104,7 @@ function applyUiChoice(choice) {
   const switchSeg = $('#notify-switch');
   if (!switchSeg) return;
   const buttons = switchSeg.querySelectorAll('.theme-seg-btn');
-  
+
   buttons.forEach(btn => {
     btn.classList.toggle('active', btn.dataset.notifyChoice === choice);
   });
@@ -108,6 +112,17 @@ function applyUiChoice(choice) {
   const activeIndex = choice === 'on' ? 1 : 0;
   const handleWidth = switchSeg.offsetWidth / 2 - 2;
   switchSeg.style.setProperty('--handle-offset', `${activeIndex * handleWidth}px`);
+}
+
+// Re-position the slider handle from the currently-active button. initNotifications
+// runs while the Profile panel is hidden, so the first applyUiChoice() measures
+// offsetWidth as 0 and parks the handle at the far left; call this once the panel
+// is visible (app.js does, on entering the Profile tab) to snap it into place.
+export function resyncNotifyHandle() {
+  const switchSeg = $('#notify-switch');
+  if (!switchSeg || !isNotificationsSupported) return;
+  const activeBtn = switchSeg.querySelector('.theme-seg-btn.active');
+  if (activeBtn) applyUiChoice(activeBtn.dataset.notifyChoice);
 }
 
 // Subscribe Flow
@@ -154,6 +169,15 @@ async function subscribeFlow() {
     alert('Subscription failed: ' + err.message);
     return false;
   }
+}
+
+// Tear down push on sign-out: remove this device's subscription so a logged-out
+// (or subsequently different) account never keeps receiving the previous user's
+// club notifications. Must run while the old session is still valid — the DB
+// delete is RLS-scoped to auth.uid() — so app.js calls this BEFORE logout().
+export async function teardownPushOnLogout() {
+  if (!isNotificationsSupported) return;
+  await unsubscribeFlow();
 }
 
 // Unsubscribe Flow

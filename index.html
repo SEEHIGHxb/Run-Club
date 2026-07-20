@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./index.css?v=9">
+  <link rel="stylesheet" href="./index.css?v=10">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icons/runorlose.png?v=1">
 </head>
@@ -501,10 +501,10 @@
       
       <!-- Card Theme Selector -->
       <div class="share-themes" style="display: flex; gap: 8px; justify-content: center; margin-bottom: 12px;">
-        <button type="button" class="theme-dot active" data-theme="sunrise" style="background: linear-gradient(135deg, #ff4e50, #f9d423);" title="Sunrise"></button>
-        <button type="button" class="theme-dot" data-theme="carbon" style="background: linear-gradient(135deg, #232526, #414345);" title="Carbon"></button>
-        <button type="button" class="theme-dot" data-theme="electric" style="background: linear-gradient(135deg, #8a2387, #e94057, #f27121);" title="Electric"></button>
-        <button type="button" class="theme-dot" data-theme="forest" style="background: linear-gradient(135deg, #11998e, #38ef7d);" title="Forest"></button>
+        <button type="button" class="theme-dot active" data-theme="sunrise" style="background: linear-gradient(135deg, #ff4e50, #f9d423);" title="Sunrise" aria-label="Sunrise theme"></button>
+        <button type="button" class="theme-dot" data-theme="carbon" style="background: linear-gradient(135deg, #232526, #414345);" title="Carbon" aria-label="Carbon theme"></button>
+        <button type="button" class="theme-dot" data-theme="electric" style="background: linear-gradient(135deg, #8a2387, #e94057, #f27121);" title="Electric" aria-label="Electric theme"></button>
+        <button type="button" class="theme-dot" data-theme="forest" style="background: linear-gradient(135deg, #11998e, #38ef7d);" title="Forest" aria-label="Forest theme"></button>
       </div>
 
       <!-- Preview Frame -->
@@ -514,15 +514,13 @@
 
       <!-- Action Buttons -->
       <div class="modal-actions" style="margin-top: 12px; gap: 8px;">
-        <button type="button" id="btn-share-ig-story" class="btn btn-primary" style="background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); border: 0; color: #fff; padding: 10px 16px; font-weight: 700;">
-          Share to Instagram Story
+        <button type="button" id="btn-share-native" class="btn btn-ig">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          Share to Instagram
         </button>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-          <button type="button" id="btn-share-ig-post" class="btn btn-sm">Feed / Post</button>
-          <button type="button" id="btn-share-ig-chat" class="btn btn-sm">Direct Chat</button>
-        </div>
+        <p class="share-hint">Opens your share sheet — pick Instagram Story, Feed, or Direct. Use the toggle above to switch between a 9:16 Story and a 1:1 Post.</p>
         <button type="button" id="btn-share-download" class="btn btn-ghost btn-sm" style="border: 1px solid var(--line); font-weight: 600;">
-          Save to Gallery (Download)
+          Save image
         </button>
         <button type="button" id="btn-share-close" class="btn btn-ghost btn-sm">Close</button>
       </div>

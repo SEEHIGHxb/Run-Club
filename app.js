@@ -27,7 +27,7 @@ import { state } from './state.js';
 import { $, todayISO, formatDisplayName } from './util.js';
 import { initThemeSwitch } from './theme.js';
 import { initAvatarCropper } from './cropper.js';
-import { initNotifications } from './notifications.js';
+import { initNotifications, resyncNotifyHandle, teardownPushOnLogout } from './notifications.js';
 import { initShare, openShareRun, openShareLeaderboard } from './share.js';
 import {
   initLeaderboard,
@@ -274,6 +274,11 @@ function exitApp() {
 
 async function onLogoutClick() {
   if (confirm('Are you sure you want to sign out?')) {
+    // Remove this device's push subscription FIRST, while the session is still
+    // valid (the DB delete is RLS-scoped to the signed-in user). Otherwise the
+    // logged-out device keeps receiving this account's club notifications — and
+    // a different account signing in on the same browser would collide with it.
+    await teardownPushOnLogout();
     await logout();
   }
 }
@@ -316,6 +321,10 @@ async function loadProfileTab() {
 
   const editAvatar = $('#profile-edit-avatar');
   editAvatar.src = state.me.avatar_url || 'https://authjs.dev/img/providers/google.svg';
+
+  // The notification toggle's slider was positioned at startup while this panel
+  // was hidden (offsetWidth 0), so snap it to the right spot now that it's shown.
+  resyncNotifyHandle();
 
   try {
     const user = await getCurrentUser();

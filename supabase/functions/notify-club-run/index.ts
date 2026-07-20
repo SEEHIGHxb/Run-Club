@@ -2,15 +2,45 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import webpush from "npm:web-push";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+// Constant-time comparison so a wrong secret can't be recovered by measuring
+// how quickly this function rejects it.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+function json(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 serve(async (req) => {
-  // Handle CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+  // This runs with the SERVICE-ROLE key (full DB access, RLS bypassed), so it
+  // must authenticate its caller. It is invoked only by a Supabase Database
+  // Webhook (server-to-server) on runs INSERT — no browser ever calls it, so
+  // there is deliberately no CORS handling. The webhook is configured to send a
+  // shared secret as the `x-webhook-secret` header; we verify it before trusting
+  // the payload. Without this, anyone who reached the URL could POST a forged
+  // `{type:"INSERT", table:"runs", record:{...}}` and blast fabricated push
+  // notifications to a victim's club-mates.
+  if (req.method !== "POST") {
+    return json({ error: "Method not allowed" }, 405);
+  }
+
+  const expectedSecret = Deno.env.get("WEBHOOK_SECRET");
+  if (!expectedSecret) {
+    console.error("WEBHOOK_SECRET is not set — refusing to process the webhook.");
+    return json({ error: "Server not configured" }, 500);
+  }
+  const providedSecret = req.headers.get("x-webhook-secret") ?? "";
+  if (!timingSafeEqual(providedSecret, expectedSecret)) {
+    return json({ error: "Unauthorized" }, 401);
   }
 
   try {
@@ -23,10 +53,7 @@ serve(async (req) => {
 
     // Make sure it is an INSERT webhook on the runs table
     if (body.type !== "INSERT" || body.table !== "runs") {
-      return new Response(JSON.stringify({ message: "Ignore non-insert operations" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
+      return json({ message: "Ignore non-insert operations" }, 200);
     }
 
     const run = body.record;
@@ -53,10 +80,7 @@ serve(async (req) => {
 
     if (membershipErr || !clubMemberships || clubMemberships.length === 0) {
       console.log("Runner is not in any clubs. Skipping notifications.");
-      return new Response(JSON.stringify({ message: "Runner is not in any clubs" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
+      return json({ message: "Runner is not in any clubs" }, 200);
     }
 
     const clubIds = clubMemberships.map((cm) => cm.club_id);
@@ -73,10 +97,7 @@ serve(async (req) => {
 
     if (membersErr || !otherMembers || otherMembers.length === 0) {
       console.log("No other members in these clubs. Skipping notifications.");
-      return new Response(JSON.stringify({ message: "No other members to notify" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
+      return json({ message: "No other members to notify" }, 200);
     }
 
     const otherUserIds = [...new Set(otherMembers.map((m) => m.user_id))];
@@ -104,10 +125,7 @@ serve(async (req) => {
 
     if (!subscriptions || subscriptions.length === 0) {
       console.log("No push subscriptions found for other club members.");
-      return new Response(JSON.stringify({ message: "No subscribers found" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      });
+      return json({ message: "No subscribers found" }, 200);
     }
 
     // Configure Web Push with VAPID credentials
@@ -127,7 +145,7 @@ serve(async (req) => {
       subscriptions.map(async (sub) => {
         const sharedClubs = userSharedClubs.get(sub.user_id) || [];
         const clubContext = sharedClubs.length > 0 ? ` [${sharedClubs[0]}]` : "";
-        
+
         const payload = JSON.stringify({
           title: `New Run${clubContext}`,
           body: `${runnerName} logged ${distanceKm} km!`,
@@ -158,15 +176,9 @@ serve(async (req) => {
     const sentCount = results.filter((r) => r.status === "fulfilled").length;
     console.log(`Finished broadcasting. Successfully sent: ${sentCount}/${subscriptions.length}`);
 
-    return new Response(JSON.stringify({ message: "Done", sent: sentCount }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
+    return json({ message: "Done", sent: sentCount }, 200);
   } catch (err: any) {
     console.error("Critical error in notify-club-run:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 500,
-    });
+    return json({ error: err.message }, 500);
   }
 });

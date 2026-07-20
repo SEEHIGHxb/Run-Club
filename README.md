@@ -53,6 +53,29 @@ export const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
 export const SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';
 ```
 
+### 7. (Optional) Enable push notifications
+Club members can be notified when someone logs a run. This needs a VAPID keypair, the `notify-club-run` Supabase Edge Function, and a Database Webhook. Skip this whole step if you don't want push — the rest of the app works without it (`schema.sql` already creates the `push_subscriptions` table it uses).
+
+1. **Generate a VAPID keypair** (identifies your server to the push services):
+   ```sh
+   npx web-push generate-vapid-keys
+   ```
+   Copy the **public** key into `config.js` as `VAPID_PUBLIC_KEY`. Keep the **private** key secret — it only ever goes into the function's secrets below.
+2. **Deploy the Edge Function** (requires the [Supabase CLI](https://supabase.com/docs/guides/cli), logged in and linked to your project):
+   ```sh
+   supabase functions deploy notify-club-run
+   ```
+3. **Set the function's secrets** in the Supabase Dashboard under **Edge Functions · notify-club-run · Secrets** (or via `supabase secrets set`):
+   * `VAPID_PUBLIC_KEY` — the public key from step 1.
+   * `VAPID_PRIVATE_KEY` — the private key from step 1.
+   * `VAPID_SUBJECT` — a contact URL, e.g. `mailto:you@example.com`.
+   * `WEBHOOK_SECRET` — any long random string you invent. The function rejects every request that doesn't present this exact value (so a stranger can't POST fake run notifications). `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically — don't set them yourself.
+4. **Create the Database Webhook** under **Database · Webhooks · Create a new hook**:
+   * **Table:** `runs`, **Events:** `Insert`.
+   * **Type:** Supabase Edge Function → `notify-club-run`.
+   * **HTTP Headers:** add `x-webhook-secret` with the **same** value you used for `WEBHOOK_SECRET`. Without a matching header the function returns `401` and sends nothing.
+5. Users turn notifications on per-device from the **Profile** tab (grants browser permission and stores their push subscription).
+
 ---
 
 ## How it works

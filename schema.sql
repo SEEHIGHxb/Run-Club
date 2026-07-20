@@ -6,6 +6,7 @@
 -- Drop old tables if rebuilding. The group_* tables are dropped (not recreated)
 -- because the group feature has been removed — this cleans them out of any
 -- earlier install.
+drop table if exists public.push_subscriptions cascade;
 drop table if exists public.club_members cascade;
 drop table if exists public.clubs cascade;
 drop table if exists public.runs cascade;
