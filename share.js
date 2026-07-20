@@ -5,9 +5,10 @@
 // ============================================================================
 
 import { $, escapeHtml, fmtKm, fmtDuration, paceLabel, fmtDate, safeUrl } from './util.js';
-import { state } from './state.js';
 
 let html2canvasModule = null;
+
+const CARD_WIDTH = 1080;
 
 // Safe single-letter avatar fallback: escaped so a name starting with `<`/`&`
 // can't corrupt the card markup, and never throws on an empty/whitespace name
@@ -15,6 +16,35 @@ let html2canvasModule = null;
 function initial(name) {
   const s = (name || '').trim();
   return s ? escapeHtml(s[0].toUpperCase()) : '?';
+}
+
+// Hard character budget for free text on the card. html2canvas 1.4.1 does not
+// honour -webkit-line-clamp, so CSS clamping would look right in the preview and
+// then overflow in the exported PNG — trimming the string is the only fix that
+// holds for both.
+function truncate(text, max) {
+  const t = String(text ?? '').trim().replace(/\s+/g, ' ');
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+
+// Split the distance so the number can be set as a hero figure and the unit as a
+// smaller suffix. Mirrors fmtKm's rounding so the card never disagrees with the
+// rest of the app.
+function kmParts(km) {
+  const n = Number(km);
+  if (!Number.isFinite(n)) return { value: '0', unit: 'km' };
+  return { value: String(Number.isInteger(n) ? n : Number(n.toFixed(2))), unit: 'km' };
+}
+
+// Match the preview scale to the frame's measured width. The frame's aspect
+// ratio always equals the card's, so scaling by width alone fills it exactly in
+// both 9:16 and 1:1 — no letterboxing, no clipping, at any viewport size.
+function fitPreview() {
+  const frame = document.querySelector('.share-preview-frame');
+  if (!frame) return;
+  const width = frame.clientWidth;
+  if (!width) return;
+  frame.style.setProperty('--preview-scale', String(width / CARD_WIDTH));
 }
 
 // Dynamic loader for html2canvas to optimize startup performance
@@ -79,13 +109,28 @@ export function initShare() {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) modal.hidden = true;
   });
+
+  // Close on Escape, matching the backdrop click. Bound on document because the
+  // modal itself never holds focus.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.hidden) modal.hidden = true;
+  });
+
+  // Re-fit whenever the frame's width changes: opening the modal, switching
+  // ratio, rotating the phone, or the on-screen keyboard resizing the viewport.
+  const frame = $('.share-preview-frame');
+  if (frame && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(fitPreview).observe(frame);
+  } else {
+    window.addEventListener('resize', fitPreview);
+  }
 }
 
 export function openShareRun(run) {
   shareTargetData = { type: 'run', run };
   shareRatio = 'story';
   shareTheme = 'sunrise';
-  
+
   // Reset buttons
   $('#btn-share-ratio-story').classList.add('active');
   $('#btn-share-ratio-post').classList.remove('active');
@@ -94,8 +139,11 @@ export function openShareRun(run) {
     d.classList.toggle('active', d.dataset.theme === 'sunrise');
   });
 
-  updateSharePreview();
+  // Unhide first: fitPreview measures the frame, and a hidden frame measures 0,
+  // which would leave the card on the fallback scale until the ResizeObserver
+  // caught up — a visible flash of a wrongly-sized preview on every open.
   $('#share-modal').hidden = false;
+  updateSharePreview();
 }
 
 export function openShareLeaderboard(clubName, range, ranked) {
@@ -111,8 +159,9 @@ export function openShareLeaderboard(clubName, range, ranked) {
     d.classList.toggle('active', d.dataset.theme === 'sunrise');
   });
 
-  updateSharePreview();
+  // Unhide before measuring — see the note in openShareRun.
   $('#share-modal').hidden = false;
+  updateSharePreview();
 }
 
 // Generate the HTML template for the card
@@ -125,25 +174,29 @@ function buildCardHtml(renderRatio, renderTheme) {
 
   let contentHtml = '';
 
+  const isPost = renderRatio === 'post';
+
   if (isLeaderboard) {
     const { clubName, range, ranked } = shareTargetData;
     const rangeLabel = range === 'week' ? 'This Week' : range === 'month' ? 'This Month' : 'All Time';
-    
-    // Only display top 5 to fit the layout comfortably
-    const topRanked = ranked.slice(0, 5);
+
+    // The 1:1 Post has roughly half the vertical room of a 9:16 Story, so it
+    // shows a shorter podium rather than shrinking every row until it is
+    // unreadable at feed size.
+    const topRanked = ranked.slice(0, isPost ? 4 : 6);
     const listItems = topRanked.map((row, index) => {
       // Sanitize the avatar URL the same way the rest of the app does (safeUrl),
       // then escape it for the attribute; fall back to a safe initial otherwise.
       const safeAvatar = safeUrl(row.avatar);
       const avatarHtml = safeAvatar
         ? `<img class="card-leaderboard-avatar" src="${escapeHtml(safeAvatar)}" crossorigin="anonymous">`
-        : `<div class="card-leaderboard-avatar card-avatar-fallback" style="font-size:2.4rem;">${initial(row.name)}</div>`;
+        : `<div class="card-leaderboard-avatar card-avatar-fallback" style="font-size:36px;">${initial(row.name)}</div>`;
 
       return `
-        <li class="card-leaderboard-row">
-          <span class="card-leaderboard-rank">#${index + 1}</span>
+        <li class="card-leaderboard-row${index === 0 ? ' is-leader' : ''}">
+          <span class="card-leaderboard-rank">${index + 1}</span>
           ${avatarHtml}
-          <span class="card-leaderboard-name">${escapeHtml(row.name)}</span>
+          <span class="card-leaderboard-name">${escapeHtml(truncate(row.name, isPost ? 14 : 18))}</span>
           <span class="card-leaderboard-km">${fmtKm(row.km)}</span>
         </li>
       `;
@@ -152,12 +205,12 @@ function buildCardHtml(renderRatio, renderTheme) {
     contentHtml = `
       <div class="card-header-brand">
         <div>
-          <span class="card-title">${escapeHtml(clubName)}</span>
-          <div style="font-size:1.5rem; opacity:0.8; margin-top:4px;">Club Leaderboard · ${rangeLabel}</div>
+          <div class="card-eyebrow">Club leaderboard · ${rangeLabel}</div>
+          <div class="card-runner-name" style="margin-top:10px;">${escapeHtml(truncate(clubName, 22))}</div>
         </div>
         <img class="card-logo" src="./icons/runorlose.png" alt="Logo">
       </div>
-      
+
       <ul class="card-leaderboard-list">
         ${listItems}
       </ul>
@@ -168,44 +221,50 @@ function buildCardHtml(renderRatio, renderTheme) {
     const runnerName = run.profiles?.display_name || 'Runner';
     const safeAvatar = safeUrl(run.profiles?.avatar_url);
     const pace = paceLabel(run.distance_km, run.duration_min);
+    const distance = kmParts(run.distance_km);
 
     const avatarHtml = safeAvatar
       ? `<img class="card-runner-avatar" src="${escapeHtml(safeAvatar)}" crossorigin="anonymous">`
-      : `<div class="card-runner-avatar card-avatar-fallback" style="font-size:3rem;">${initial(runnerName)}</div>`;
+      : `<div class="card-runner-avatar card-avatar-fallback" style="font-size:42px;">${initial(runnerName)}</div>`;
 
-    const notesHtml = run.notes ? `<div class="card-notes">"${escapeHtml(run.notes)}"</div>` : '';
-    const paceRow = pace ? `
-      <div class="card-stat-row">
-        <span class="card-stat-label">Pace</span>
-        <span class="card-stat-value">${pace}</span>
-      </div>` : '';
-    const durationRow = run.duration_min ? `
-      <div class="card-stat-row">
-        <span class="card-stat-label">Duration</span>
-        <span class="card-stat-value">${fmtDuration(run.duration_min)}</span>
-      </div>` : '';
+    // Duration and pace drop to equal-weight tiles below the hero figure; the
+    // strip is omitted entirely when a run has neither, so the card never shows
+    // an empty container.
+    const metrics = [];
+    if (run.duration_min) metrics.push({ label: 'Time', value: fmtDuration(run.duration_min) });
+    if (pace) metrics.push({ label: 'Pace', value: pace });
+    const metricsHtml = metrics.length
+      ? `<div class="card-metrics">${metrics.map((m) => `
+          <div class="card-metric">
+            <span class="card-metric-label">${m.label}</span>
+            <span class="card-metric-value">${escapeHtml(m.value)}</span>
+          </div>`).join('')}</div>`
+      : '';
+
+    const notes = truncate(run.notes, isPost ? 90 : 150);
+    const notesHtml = notes ? `<div class="card-notes">“${escapeHtml(notes)}”</div>` : '';
 
     contentHtml = `
       <div class="card-header-brand">
         <div class="card-runner-profile">
           ${avatarHtml}
-          <div>
-            <div class="card-runner-name">${escapeHtml(runnerName)}</div>
-            <div style="font-size:1.5rem; opacity:0.8;">logged a run</div>
+          <div style="min-width:0;">
+            <div class="card-runner-name">${escapeHtml(truncate(runnerName, 20))}</div>
+            <div class="card-eyebrow" style="margin-top:8px;">Logged a run</div>
           </div>
         </div>
         <img class="card-logo" src="./icons/runorlose.png" alt="Logo">
       </div>
 
-      <div class="card-stats-container">
-        <div class="card-stat-row">
-          <span class="card-stat-label">Distance</span>
-          <span class="card-stat-value" style="font-size: 4.5rem; font-weight:900;">${fmtKm(run.distance_km)}</span>
+      <div class="card-hero">
+        <span class="card-eyebrow">Distance</span>
+        <div class="card-hero-value">
+          ${escapeHtml(distance.value)}<span class="card-hero-unit">${distance.unit}</span>
         </div>
-        ${durationRow}
-        ${paceRow}
-        ${notesHtml}
       </div>
+
+      ${metricsHtml}
+      ${notesHtml}
     `;
   }
 
@@ -227,13 +286,8 @@ function updateSharePreview() {
   if (!container) return;
   
   container.innerHTML = buildCardHtml(shareRatio, shareTheme);
-  
-  // Align transform scales based on aspect ratio
-  if (shareRatio === 'post') {
-    container.style.height = '1080px';
-  } else {
-    container.style.height = '1920px';
-  }
+  container.style.height = shareRatio === 'post' ? '1080px' : '1920px';
+  fitPreview();
 }
 
 // Generate image using html2canvas

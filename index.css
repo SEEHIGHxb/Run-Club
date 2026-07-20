@@ -313,12 +313,17 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 .empty { color: var(--muted); font-size: .88rem; padding: 14px; text-align: center; list-style: none; }
 
 /* ---- Modal Dialog Overlay ---- */
+/* Flex + `margin: auto` on the card instead of `place-items: center`: a centred
+   grid/flex item that is taller than the viewport overflows in BOTH directions,
+   so its top is clipped and unreachable. Auto margins centre the same way but
+   collapse under overflow, so a tall modal stays scrollable to the top. */
 .modal {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(4px);
-  display: grid; place-items: center; padding: 20px; z-index: 100;
+  display: flex; overflow-y: auto; padding: 20px; z-index: 100;
 }
 .modal-card {
+  margin: auto;
   width: 100%; max-width: 440px; background: var(--card);
   border-radius: 20px; box-shadow: var(--shadow); padding: 30px 24px;
   display: flex; flex-direction: column; gap: 14px; text-align: center;
@@ -459,34 +464,46 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
 /* ===========================================================================
    Share Preview & Card Templates
    =========================================================================== */
+/* The preview is sized from a HEIGHT cap, not from 100% width. At 100% width a
+   9:16 frame inside the 400px modal is ~551px tall on a phone, which pushed the
+   share buttons below the fold of an unscrollable modal — the 9:16 option was
+   effectively unusable. Deriving width from the cap keeps the whole modal on
+   screen in both ratios. */
 .share-preview-frame {
-  width: 100%;
-  aspect-ratio: 9/16;
+  --preview-max-h: 44vh;
+  width: min(100%, calc(var(--preview-max-h) * 9 / 16));
+  aspect-ratio: 9 / 16;
+  margin-inline: auto;
   background: var(--bg);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
   box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
-  border: 1px solid var(--line);
+  /* Outline, not border: a border would shrink the content box so that it no
+     longer matches the 9:16 aspect box, leaving a hairline of backdrop along the
+     bottom edge once the card is scaled by width. Outlines take no layout space. */
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
 }
 .share-preview-frame.post-ratio {
-  aspect-ratio: 1/1;
+  width: min(100%, var(--preview-max-h));
+  aspect-ratio: 1 / 1;
 }
 
+/* Scale is measured at runtime (fitPreview in share.js) rather than hard-coded:
+   the old fixed 0.24/0.29 pair only lined up at one exact frame width, so the
+   9:16 card floated in a letterbox and the 1:1 card overflowed and got clipped.
+   Anchoring at top left means scale = frameWidth / 1080 fills the frame exactly,
+   because both frames share the card's aspect ratio. */
 #share-preview-render {
-  transform: scale(0.24);
-  transform-origin: center center;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 1080px;
   height: 1920px;
-  position: absolute;
+  transform-origin: top left;
+  transform: scale(var(--preview-scale, 0.24));
   pointer-events: none;
-}
-.post-ratio #share-preview-render {
-  height: 1080px;
-  transform: scale(0.29);
 }
 
 .theme-dot {
@@ -531,31 +548,62 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
   text-align: center;
 }
 
-/* 1080p rendering layout (html2canvas capture target) */
+/* 1080p rendering layout (html2canvas capture target).
+   Sizes here are in px, not rem: the card is a fixed 1080px canvas, so tying it
+   to the root font size would let a user's browser zoom setting distort the
+   exported PNG.
+   html2canvas 1.4.1 rasterises text itself, so paint-only CSS it cannot
+   reproduce is avoided throughout this section: no background-clip:text, no
+   filter/backdrop-filter, no mix-blend-mode, no -webkit-line-clamp (long text is
+   trimmed in share.js instead). Layout is safe — the node is cloned into a real
+   iframe, so flex, grid and gap are laid out by the browser. */
 .share-card-layout {
   width: 1080px;
   height: 1920px;
   box-sizing: border-box;
-  padding: 80px 60px;
+  padding: 96px 84px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   color: #ffffff;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   text-align: left;
-  /* Keep white text legible on the lighter gradients (sunrise/forest). */
-  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.22);
+  position: relative;
+  overflow: hidden;
 }
 .share-card-layout.post-format {
   height: 1080px;
-  padding: 60px;
+  padding: 68px 64px;
 }
 
-/* Gradients */
-.share-theme-sunrise { background: linear-gradient(135deg, #ff4e50 0%, #f9d423 100%); }
-.share-theme-carbon { background: linear-gradient(135deg, #232526 0%, #414345 100%); }
-.share-theme-electric { background: linear-gradient(135deg, #8a2387 0%, #e94057 50%, #f27121 100%); }
-.share-theme-forest { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+/* Mesh gradients: a directional base with two off-centre radial highlights.
+   The old two-stop 135deg ramps read as generic stock gradients; layering gives
+   the card depth and a focal point behind the hero number. Each theme keeps a
+   dark quadrant at the bottom so the footer and metrics stay legible without
+   blanketing the whole card in text-shadow. */
+.share-theme-sunrise {
+  background:
+    radial-gradient(78% 55% at 15% 8%, #ffd166 0%, rgba(255, 209, 102, 0) 60%),
+    radial-gradient(70% 50% at 92% 26%, #ff5f6d 0%, rgba(255, 95, 109, 0) 62%),
+    linear-gradient(168deg, #ff8a3d 0%, #ef4d5e 48%, #8e2a63 100%);
+}
+.share-theme-carbon {
+  background:
+    radial-gradient(70% 48% at 20% 12%, #3f4550 0%, rgba(63, 69, 80, 0) 62%),
+    radial-gradient(64% 46% at 88% 30%, #ff5a3c 0%, rgba(255, 90, 60, 0) 58%),
+    linear-gradient(170deg, #23262d 0%, #15171c 55%, #0b0c0f 100%);
+}
+.share-theme-electric {
+  background:
+    radial-gradient(72% 50% at 12% 10%, #7b5cff 0%, rgba(123, 92, 255, 0) 60%),
+    radial-gradient(68% 48% at 90% 28%, #ff3d8b 0%, rgba(255, 61, 139, 0) 60%),
+    linear-gradient(172deg, #4a2ec9 0%, #a3238e 52%, #3a1152 100%);
+}
+.share-theme-forest {
+  background:
+    radial-gradient(74% 52% at 16% 10%, #4ade80 0%, rgba(74, 222, 128, 0) 60%),
+    radial-gradient(66% 46% at 90% 30%, #22d3ee 0%, rgba(34, 211, 238, 0) 58%),
+    linear-gradient(170deg, #0f9b8e 0%, #0b6b62 52%, #04302f 100%);
+}
 
 /* Initial-letter placeholder shown when a runner has no avatar (see share.js). */
 .card-avatar-fallback {
@@ -568,147 +616,207 @@ code { background: var(--bg); padding: 2px 6px; border-radius: 5px; font-size: .
   text-shadow: none;
 }
 
-/* Card Content Blocks */
+/* ---- Card header: identity on the left, mark on the right ---- */
 .card-header-brand {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
+  gap: 24px;
 }
 .card-logo {
-  width: 100px;
-  height: 100px;
-  border-radius: 24px;
+  width: 84px;
+  height: 84px;
+  border-radius: 22px;
   object-fit: contain;
-  border: 2px solid rgba(255,255,255,0.4);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.10);
+  flex-shrink: 0;
 }
-.card-title {
-  font-size: 2.8rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: -0.01em;
-  display: block;
-}
-
 .card-runner-profile {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 22px;
+  min-width: 0;
 }
 .card-runner-avatar {
-  width: 110px;
-  height: 110px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
-  border: 4px solid rgba(255, 255, 255, 0.85);
+  border: 3px solid rgba(255, 255, 255, 0.9);
   object-fit: cover;
+  flex-shrink: 0;
 }
 .card-runner-name {
-  font-size: 2.4rem;
-  font-weight: 800;
+  font-size: 38px;
+  font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+/* Small uppercase caption used under the runner name and above the hero stat. */
+.card-eyebrow {
+  font-size: 22px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  opacity: 0.72;
 }
 
-.card-stats-container {
+/* ---- Hero stat: one number doing all the work ----
+   The old card gave distance, duration and pace equal weight in a bordered
+   label/value list, which read like a receipt. A single oversized figure is the
+   convention every running app converged on because it survives being viewed
+   thumbnail-sized in a Story feed. */
+.card-hero {
+  margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  margin: auto 0;
+  gap: 14px;
 }
-.card-stat-row {
+.card-hero-value {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  border-bottom: 2px solid rgba(255, 255, 255, 0.25);
-  padding-bottom: 12px;
-}
-.card-stat-label {
-  font-size: 1.8rem;
-  font-weight: 600;
-  opacity: 0.85;
-  letter-spacing: -0.01em;
-}
-.card-stat-value {
-  font-size: 3rem;
+  align-items: baseline;
+  gap: 18px;
+  font-size: 280px;
   font-weight: 800;
+  line-height: 0.86;
+  letter-spacing: -0.055em;
+  font-variant-numeric: tabular-nums;
 }
+.card-hero-unit {
+  font-size: 76px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  opacity: 0.8;
+}
+.post-format .card-hero-value { font-size: 190px; gap: 14px; }
+.post-format .card-hero-unit { font-size: 56px; }
 
+/* ---- Metric strip: secondary stats as equal-width tiles ---- */
+.card-metrics {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 16px;
+  margin-top: 48px;
+}
+.card-metric {
+  background: rgba(255, 255, 255, 0.13);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 24px;
+  padding: 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.card-metric-label {
+  font-size: 20px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  opacity: 0.72;
+}
+.card-metric-value {
+  font-size: 46px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.post-format .card-metrics { margin-top: 34px; gap: 12px; }
+.post-format .card-metric { padding: 20px 18px; border-radius: 20px; }
+.post-format .card-metric-value { font-size: 36px; }
+
+/* Notes are trimmed to a character budget in share.js, so no line-clamp here. */
 .card-notes {
-  font-size: 2rem;
-  font-style: italic;
-  opacity: 0.95;
-  margin-top: 10px;
-  line-height: 1.4;
+  font-size: 30px;
+  line-height: 1.45;
   font-weight: 400;
-  border-left: 6px solid rgba(255,255,255,0.5);
-  padding-left: 20px;
-  /* Cap very long notes so they can't overflow the card, esp. the 1:1 Post. */
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  opacity: 0.92;
+  margin-top: 34px;
+  padding-left: 22px;
+  border-left: 4px solid rgba(255, 255, 255, 0.45);
 }
+.post-format .card-notes { font-size: 24px; margin-top: 24px; }
 
+/* ---- Footer ---- */
 .card-footer {
+  margin-top: auto;
+  padding-top: 30px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 2px solid rgba(255, 255, 255, 0.3);
-  padding-top: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
 }
 .card-footer-logo-text {
-  font-size: 2.4rem;
-  font-weight: 900;
-  letter-spacing: -0.03em;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
 }
 .card-footer-date {
-  font-size: 1.5rem;
-  opacity: 0.85;
+  font-size: 24px;
+  opacity: 0.8;
   font-weight: 500;
 }
 
-/* Leaderboard share card elements */
+/* ---- Leaderboard card ---- */
 .card-leaderboard-list {
   list-style: none;
   padding: 0;
-  margin: 40px 0;
+  margin: auto 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 .card-leaderboard-row {
   display: grid;
-  grid-template-columns: 80px 90px 1fr auto;
+  grid-template-columns: 78px 84px 1fr auto;
   align-items: center;
-  gap: 16px;
-  background: rgba(255, 255, 255, 0.12);
-  padding: 16px 20px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 22px;
+  background: rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 22px 28px;
+  border-radius: 26px;
+}
+/* Leader gets a brighter tile so the winner is readable at thumbnail size. */
+.card-leaderboard-row.is-leader {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.42);
 }
 .card-leaderboard-rank {
-  font-size: 2.2rem;
-  font-weight: 900;
-  opacity: 0.85;
-  text-align: center;
+  font-size: 44px;
+  font-weight: 800;
+  opacity: 0.7;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
 }
+.is-leader .card-leaderboard-rank { opacity: 1; }
 .card-leaderboard-avatar {
-  width: 76px;
-  height: 76px;
+  width: 84px;
+  height: 84px;
   border-radius: 50%;
-  border: 2px solid #ffffff;
+  border: 2px solid rgba(255, 255, 255, 0.85);
   object-fit: cover;
 }
 .card-leaderboard-name {
-  font-size: 2rem;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  min-width: 0;
 }
 .card-leaderboard-km {
-  font-size: 2.2rem;
-  font-weight: 800;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+.post-format .card-leaderboard-list { gap: 12px; }
+.post-format .card-leaderboard-row { padding: 16px 22px; gap: 18px; grid-template-columns: 62px 66px 1fr auto; }
+.post-format .card-leaderboard-rank { font-size: 34px; }
+.post-format .card-leaderboard-avatar { width: 66px; height: 66px; }
+.post-format .card-leaderboard-name { font-size: 28px; }
+.post-format .card-leaderboard-km { font-size: 32px; }
 
 /* Run share button in items list */
 .run-share {
